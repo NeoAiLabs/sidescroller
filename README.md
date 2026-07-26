@@ -9,6 +9,7 @@ Each model receives the prompt in [`sidescroller prompt.txt`](./sidescroller%20p
 | Model | Game |
 | --- | --- |
 | GPT-5.6Sol | [`GPT-5.6Sol.html`](./GPT-5.6Sol.html) |
+| Ling-3.0-Flash | [`Ling-3.0-Flash.html`](./Ling-3.0-Flash.html) |
 
 ## Run a game
 
