@@ -1,0 +1,46 @@
+Create a complete single-file HTML5 side-scroller game using only HTML, CSS, and vanilla JavaScript.
+
+Game concept:
+A small Hermes Agent character must travel through a chaotic digital shoreline to reach the final boss: a disfigured cyber-lobster.
+
+Requirements:
+- Everything must be contained in one HTML file.
+- No external libraries, images, audio, or assets.
+- Use canvas for the game.
+- Include keyboard controls.
+- Include start screen, gameplay, win screen, and game over screen.
+- Style should be fun, colourful, slightly weird, and retro-tech inspired.
+- The Hermes Agent character should look like a tiny hooded terminal explorer with glowing eyes and a small cape.
+- The world should mix beach, server room, and cyberpunk terminal aesthetics.
+- The final boss should be a huge distorted lobster with mismatched claws, glitch effects, glowing eyes, and shell armour.
+- No gore or realistic violence. Keep it cartoonish.
+
+Gameplay:
+- Side-scrolling platformer.
+- Player can move left/right, jump, and shoot small “prompt bolts”.
+- Enemies include corrupted shellfish, rogue terminals, and floating error bubbles.
+- Add coins or “tokens” to collect.
+- Add health, score, and progress bar.
+- Include checkpoints.
+- Include simple boss fight at the end.
+- Boss should move, attack with falling glitch bubbles, and take multiple hits.
+- Player wins after defeating the boss.
+
+Controls:
+- Arrow keys or WASD to move.
+- Space to jump.
+- J or left mouse click to shoot.
+- R to restart after game over or win.
+
+Implementation details:
+- Smooth animation using requestAnimationFrame.
+- Basic physics: gravity, jumping, collision detection, enemy movement.
+- Parallax background layers.
+- Camera follows the player.
+- Responsive canvas that works on desktop browser.
+- Clear comments throughout the code.
+- Polished UI with title, health bar, score, tokens, and boss health bar.
+- Make the game immediately playable by opening the HTML file in a browser.
+
+Output:
+Return only the complete HTML code.
