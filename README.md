@@ -10,8 +10,9 @@ Each model receives the prompt in [`sidescroller prompt.txt`](./sidescroller%20p
 | --- | --- |
 | GPT-5.6Sol | [`GPT-5.6Sol.html`](./GPT-5.6Sol.html) |
 | Ling-3.0-Flash | [`Ling-3.0-Flash.html`](./Ling-3.0-Flash.html) |
-| Deepseekv4-Flash | [`Deepseekv4-Flash.html`](./Deepseekv4-flash.html) |
+| Deepseekv4-Flash | [`Deepseekv4-Flash.html`](./Deepseekv4-Flash.html) |
 | Grok-4.5 | [`Grok-4.5.html`](./Grok-4.5.html) |
+| North-Mini | [`North-Mini.html`](./North-Mini.html) |
 
 ## Run a game
 
