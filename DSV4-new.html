@@ -1,0 +1,1800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HERMES AGENT: CYBER-SHORE SHOWDOWN</title>
+<style>
+  /* ===== Retro-tech styling for the page shell ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0614;
+    color: #b8f2ff;
+    font-family: "Courier New", monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  #title {
+    font-size: 20px;
+    letter-spacing: 6px;
+    color: #59ffd0;
+    text-shadow: 0 0 10px #59ffd0, 0 0 30px #00ffaa55;
+    margin-bottom: 8px;
+    user-select: none;
+  }
+
+  #gameWrap {
+    position: relative;
+    border: 3px solid #2e1b5e;
+    box-shadow: 0 0 0 2px #59ffd0, 0 0 40px #7a2bff88, inset 0 0 60px #00000088;
+    border-radius: 8px;
+    background: #0d0a1a;
+  }
+
+  canvas {
+    display: block;
+    cursor: crosshair;
+  }
+
+  /* Scanline effect overlay for retro CRT feel */
+  #scanlines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.15) 3px
+    );
+    border-radius: 6px;
+  }
+
+  #hint {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #8f7bbd;
+    letter-spacing: 2px;
+    text-align: center;
+    user-select: none;
+  }
+
+  #hint b { color: #ffd54f; font-weight: normal; }
+</style>
+</head>
+<body>
+  <div id="title">HERMES&nbsp;AGENT :: CYBER-SHORE SHOWDOWN</div>
+
+  <div id="gameWrap">
+    <canvas id="game" width="960" height="540"></canvas>
+    <div id="scanlines"></div>
+  </div>
+
+  <div id="hint">
+    <b>WASD/ARROWS</b> move &nbsp;·&nbsp; <b>SPACE</b> jump &nbsp;·&nbsp; <b>J</b> or <b>CLICK</b> shoot &nbsp;·&nbsp; <b>R</b> restart
+  </div>
+
+<script>
+"use strict";
+/* =====================================================================
+   HERMES AGENT: CYBER-SHORE SHOWDOWN
+   A single-file HTML5 side-scroller.
+   Everything below is vanilla JavaScript on a 2D canvas.
+   ===================================================================== */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;   // logical width  (960)
+const H = canvas.height;  // logical height (540)
+
+/* ---------------- Game states ---------------- */
+const STATE_START    = "start";
+const STATE_PLAYING  = "playing";
+const STATE_WIN      = "win";
+const STATE_GAMEOVER = "gameover";
+
+let state = STATE_START;
+
+/* ---------------- Input ---------------- */
+const keys = {};
+document.addEventListener("keydown", (e) => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === " ") e.preventDefault();
+  if (e.key.toLowerCase() === "r" && (state === STATE_GAMEOVER || state === STATE_WIN)) {
+    resetGame();
+  }
+});
+document.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+canvas.addEventListener("mousedown", (e) => {
+  if (state === STATE_START) { state = STATE_PLAYING; return; }
+  if (state === STATE_PLAYING) { shoot(); }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() === "enter" && state === STATE_START) {
+    state = STATE_PLAYING;
+  }
+});
+
+/* ---------------- Player object ---------------- */
+const player = {
+  x: 120, y: 300,
+  w: 34, h: 46,
+  vx: 0, vy: 0,
+  speed: 4.6,
+  jumpPower: -13.5,
+  onGround: false,
+  facing: 1,            // 1 = right, -1 = left
+  health: 5,
+  maxHealth: 5,
+  invuln: 0,            // invulnerability timer after damage
+  shootCooldown: 0,
+  alive: true,
+  capeWave: 0,
+  checkpointX: 120,
+  checkpointY: 260,
+  respawnTimer: 0,
+};
+
+/* ---------------- World constants ---------------- */
+const GROUND_Y = 470;             // top surface of the main ground line
+const LEVEL_LENGTH = 6400;        // how long the level is
+const WIN_X = 5800;               // boss arena starts here
+
+/* ---------------- World entities ---------------- */
+let platforms = [];      // static platforms
+let enemies = [];        // corrupted shellfish / rogue terminals
+let bubbles = [];        // floating error bubbles
+let tokens = [];         // collectible tokens
+let checkpoints = [];    // checkpoint flags
+let bolts = [];          // player prompt bolts
+let bossBolts = [];      // boss glitch bubbles
+let particles = [];      // little effects
+let sparks = [];         // shooting muzzle sparks
+
+let score = 0;
+let tokensCollected = 0;
+let totalTokens = 0;
+let gameTimer = 0;
+let shake = 0;           // screen shake timer
+let winTimer = 0;
+
+/* ---------------- Boss ---------------- */
+const boss = {
+  x: 6000, y: 250,
+  w: 160, h: 150,
+  health: 30,
+  maxHealth: 30,
+  phase: 1,
+  attackTimer: 0,
+  hoverTimer: 0,
+  moving: false,
+  facing: -1,
+  glitch: 0,
+  dead: false,
+  deadTimer: 0,
+  spawnWave: 0,
+  nextAttack: 90,
+};
+
+/* ---------------- Utility ---------------- */
+function rand(a, b) { return a + Math.random() * (b - a); }
+function randi(a, b) { return Math.floor(rand(a, b + 1)); }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function overlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/* =====================================================================
+   LEVEL CONSTRUCTION
+   ===================================================================== */
+function buildLevel() {
+  platforms = [];
+  enemies = [];
+  bubbles = [];
+  tokens = [];
+  checkpoints = [];
+  bolts = [];
+  bossBolts = [];
+  particles = [];
+
+  /* ----- Ground segments (each is a full-width platform) ----- */
+  for (let i = 0; i <= LEVEL_LENGTH; i += 80) {
+    platforms.push({ x: i, y: GROUND_Y, w: 80, h: H - GROUND_Y, type: "ground" });
+  }
+
+  /* ----- Scattered platforms (beach rubble / server racks) ----- */
+  const plat = (x, y, w, h, type = "wood") => platforms.push({ x, y, w, h, type });
+
+  plat(360, 400, 120, 16, "wood");
+  plat(540, 340, 110, 16, "wood");
+  plat(760, 390, 130, 16, "metal");
+  plat(980, 320, 110, 16, "wood");
+  plat(1180, 380, 140, 16, "metal");
+  plat(1440, 330, 110, 16, "wood");
+  plat(1660, 400, 120, 16, "wood");
+  plat(1900, 340, 130, 16, "metal");
+  plat(2140, 390, 110, 16, "wood");
+  plat(2380, 320, 140, 16, "metal");
+  plat(2640, 380, 120, 16, "wood");
+  plat(2900, 330, 110, 16, "metal");
+  plat(3160, 400, 130, 16, "wood");
+  plat(3420, 340, 120, 16, "metal");
+  plat(3680, 390, 110, 16, "wood");
+  plat(3920, 320, 140, 16, "metal");
+  plat(4180, 380, 120, 16, "wood");
+  plat(4440, 330, 130, 16, "metal");
+  plat(4700, 400, 110, 16, "wood");
+  plat(4960, 340, 140, 16, "metal");
+  plat(5220, 380, 120, 16, "wood");
+  plat(5460, 330, 110, 16, "metal");
+  plat(5680, 300, 90, 16, "metal");  // stepping stone near boss
+
+  /* ----- Checkpoints ----- */
+  const mkCheckpoint = (x, y) => checkpoints.push({ x, y, active: false, w: 26, h: 54 });
+  mkCheckpoint(650, 330);
+  mkCheckpoint(1550, 340);
+  mkCheckpoint(2550, 340);
+  mkCheckpoint(3550, 340);
+  mkCheckpoint(4550, 340);
+
+  /* ----- Tokens (coins) ----- */
+  const token = (x, y) => { tokens.push({ x, y, r: 10, taken: false }); totalTokens++; };
+
+  for (let i = 0; i < 70; i++) {
+    const x = 300 + i * 85;
+    const y = 320 + (i % 5) * 22;
+    token(x, y);
+  }
+  token(610, 330); token(640, 300); token(670, 330);
+  token(1570, 330); token(1600, 300); token(1630, 330);
+  token(2570, 330); token(2600, 300); token(2630, 330);
+  token(3570, 330); token(3600, 300); token(3630, 330);
+  token(4570, 330); token(4600, 300); token(4630, 330);
+  token(5720, 280); token(5750, 250); token(5780, 280);
+
+  /* ----- Enemies: corrupted shellfish (crawlers) ----- */
+  const shellfish = (x, speed, size = 1) => enemies.push({
+    kind: "shellfish", x, y: GROUND_Y - 26 * size, w: 30 * size, h: 26 * size,
+    vx: speed, health: 1, alive: true, wobble: rand(0, 6), size,
+  });
+
+  shellfish(500, -1.1, 1.2);
+  shellfish(900, 1.0, 1);
+  shellfish(1300, -1.2, 1.3);
+  shellfish(1750, 1.1, 1);
+  shellfish(2250, -1.0, 1.2);
+  shellfish(2750, 1.2, 1);
+  shellfish(3200, -1.1, 1.3);
+  shellfish(3750, 1.0, 1);
+  shellfish(4250, -1.2, 1.2);
+  shellfish(4750, 1.1, 1);
+  shellfish(5100, -1.3, 1.2);
+
+  /* ----- Enemies: rogue terminals (static turrets) ----- */
+  const terminal = (x) => enemies.push({
+    kind: "terminal", x, y: GROUND_Y - 46, w: 34, h: 46,
+    vx: 0, health: 3, alive: true, shootTimer: randi(60, 150), screen: 0,
+  });
+  terminal(700);
+  terminal(1600);
+  terminal(2600);
+  terminal(3600);
+  terminal(4600);
+  terminal(5300);
+
+  /* ----- Floating error bubbles ----- */
+  for (let i = 0; i < 26; i++) {
+    const x = 200 + Math.random() * 4800;
+    bubbles.push({
+      x, y: rand(120, 400), r: rand(8, 16), vx: rand(-0.6, 0.6), vy: rand(-0.5, 0.5),
+      alive: true, popTimer: 0, wobble: rand(0, 6),
+    });
+  }
+}
+
+/* =====================================================================
+   GAME RESET
+   ===================================================================== */
+function resetGame() {
+  state = STATE_PLAYING;
+  buildLevel();
+  player.x = player.checkpointX;
+  player.y = player.checkpointY;
+  player.vx = 0; player.vy = 0;
+  player.health = player.maxHealth;
+  player.invuln = 0;
+  player.alive = true;
+  player.facing = 1;
+  score = 0;
+  tokensCollected = 0;
+  totalTokens = 0;
+  gameTimer = 0;
+  shake = 0;
+  winTimer = 0;
+  boss.x = 6000; boss.y = 250;
+  boss.health = boss.maxHealth;
+  boss.dead = false;
+  boss.deadTimer = 0;
+  boss.nextAttack = 120;
+  player.checkpointX = 120;
+  player.checkpointY = 260;
+  // recount tokens
+  let t = 0;
+  for (const p of platforms) p.y = GROUND_Y; // not used; keep for safety
+  // rebuild tokens list count
+  t = tokens.length;
+  totalTokens = t;
+}
+
+/* =====================================================================
+   CAMERA
+   ===================================================================== */
+let camX = 0;
+function updateCamera() {
+  const targetX = player.x - W * 0.4;
+  camX += (targetX - camX) * 0.12;
+  camX = clamp(camX, 0, LEVEL_LENGTH - W);
+}
+
+/* =====================================================================
+   PLAYER UPDATE
+   ===================================================================== */
+function updatePlayer() {
+  if (!player.alive) {
+    player.respawnTimer--;
+    if (player.respawnTimer <= 0) {
+      // respawn at last checkpoint
+      player.x = player.checkpointX;
+      player.y = player.checkpointY;
+      player.vx = 0; player.vy = 0;
+      player.health = player.maxHealth;
+      player.invuln = 90;
+      player.alive = true;
+      // return to ground if checkpoint was mid-air
+    }
+    return;
+  }
+
+  // horizontal movement
+  let dir = 0;
+  if (keys["a"] || keys["arrowleft"]) dir -= 1;
+  if (keys["d"] || keys["arrowright"]) dir += 1;
+  player.vx = dir * player.speed;
+
+  // jump
+  if ((keys[" "] || keys["w"] || keys["arrowup"]) && player.onGround) {
+    player.vy = player.jumpPower;
+    player.onGround = false;
+    spawnDust(player.x, player.y + player.h, 6);
+  }
+
+  // gravity
+  player.vy += 0.62;
+  if (player.vy > 16) player.vy = 16;
+
+  // integrate
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // world bounds (cannot leave level left or right)
+  player.x = clamp(player.x, 20, WIN_X + 900);
+  if (player.y > H + 120) {
+    // fell into the digital void
+    damagePlayer(99);
+  }
+
+  // collision with platforms
+  player.onGround = false;
+  for (const p of platforms) {
+    if (overlap(player, p)) {
+      // land on top
+      if (player.vy > 0 && player.y + player.h - player.vy <= p.y + 8) {
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+      // side collision
+      else if (player.vy <= 0 && player.y + player.h - player.vy >= p.y + p.h - 8 &&
+               player.y < p.y + p.h && player.y + player.h > p.y) {
+        player.y = p.y + p.h;
+        player.vy = 0;
+      }
+      // horizontal push
+      else if (player.x < p.x + p.w && player.x + player.w > p.x) {
+        if (player.x + player.w - player.vx <= p.x + 8) { player.x = p.x - player.w; }
+        else if (player.x - player.vx >= p.x + p.w - 8) { player.x = p.x + p.w; }
+      }
+    }
+  }
+
+  // facing
+  if (dir !== 0) player.facing = dir;
+
+  // cape animation
+  player.capeWave += 0.15;
+
+  // invulnerability timer
+  if (player.invuln > 0) player.invuln--;
+
+  // shoot cooldown
+  if (player.shootCooldown > 0) player.shootCooldown--;
+
+  // shooting
+  if ((keys["j"] || keys[";"] || keys["x"]) && player.shootCooldown <= 0) {
+    shoot();
+  }
+
+  // clamp to ground level max fall
+  if (player.y > GROUND_Y - player.h && player.vy > 0 && player.onGround === false) {
+    // ensure player can't tunnel into the floor via wide platforms
+    player.y = GROUND_Y - player.h;
+    player.vy = 0;
+    player.onGround = true;
+  }
+}
+
+function shoot() {
+  if (player.shootCooldown > 0 || !player.alive || state !== STATE_PLAYING) return;
+  player.shootCooldown = 14;
+  const bx = player.facing === 1 ? player.x + player.w : player.x;
+  const by = player.y + 14;
+  bolts.push({
+    x: bx, y: by,
+    vx: player.facing * 11,
+    w: 20, h: 8,
+    life: 60,
+    color: Math.random() < 0.5 ? "#59ffd0" : "#ffd54f",
+  });
+  for (let i = 0; i < 4; i++) {
+    sparks.push({ x: bx, y: by + rand(-4, 4), vx: -player.facing * rand(1, 3), vy: rand(-1.5, 1.5), life: 8, color: "#59ffd0" });
+  }
+}
+
+function damagePlayer(dmg) {
+  if (player.invuln > 0 || !player.alive) return;
+  player.health -= dmg;
+  player.invuln = 70;
+  shake = 8;
+  if (player.health <= 0) {
+    player.health = 0;
+    player.alive = false;
+    player.respawnTimer = 80;
+    spawnExplosion(player.x + player.w / 2, player.y + player.h / 2, 18, "#ff5f6d");
+  } else {
+    spawnExplosion(player.x + player.w / 2, player.y + 10, 6, "#ffffff");
+  }
+}
+
+/* =====================================================================
+   ENEMY UPDATE
+   ===================================================================== */
+function updateEnemies() {
+  for (const e of enemies) {
+    if (!e.alive) continue;
+
+    if (e.kind === "shellfish") {
+      // crawl along the ground, flip at edges (simple: bounce off world bounds and each other)
+      e.x += e.vx;
+      e.wobble += 0.08;
+      // stay near ground level (assume ground platforms at GROUND_Y)
+      e.y = GROUND_Y - e.h * 0.95 + Math.sin(e.wobble) * 3;
+      if (e.x < 40) e.vx = Math.abs(e.vx);
+      if (e.x > WIN_X - 200) e.vx = -Math.abs(e.vx);
+
+      // touch player
+      if (player.alive && overlap(player, e)) {
+        if (player.invuln <= 0) damagePlayer(1);
+        // knock enemy back slightly
+        e.vx = player.facing === 1 ? 2 : -2;
+      }
+    }
+
+    if (e.kind === "terminal") {
+      e.screen = Math.random() < 0.02 ? 1 : (e.screen > 0 ? e.screen - 0.02 : 0);
+      e.shootTimer--;
+      if (e.shootTimer <= 0 && player.alive) {
+        e.shootTimer = randi(120, 190);
+        // fire an error cube at the player
+        const dx = (player.x + player.w / 2) - (e.x + e.w / 2);
+        const dy = (player.y + player.h / 2) - (e.y);
+        const d = Math.hypot(dx, dy) || 1;
+        bossBolts.push({
+          x: e.x + e.w / 2, y: e.y,
+          vx: (dx / d) * 4.4,
+          vy: (dy / d) * 4.4,
+          r: 9, kind: "error", life: 400,
+        });
+        spawnSpark(e.x + e.w / 2, e.y, "#ff5f6d");
+      }
+      // touch player
+      if (player.alive && overlap(player, e) && player.invuln <= 0) {
+        damagePlayer(1);
+        player.vx = player.facing === 1 ? 6 : -6;
+        player.vy = -7;
+      }
+    }
+  }
+
+  // floating error bubbles drift
+  for (const b of bubbles) {
+    if (!b.alive) continue;
+    b.x += b.vx;
+    b.y += b.vy;
+    b.wobble += 0.05;
+    if (b.x < 40 || b.x > WIN_X + 800) b.vx *= -1;
+    if (b.y < 60 || b.y > 420) b.vy *= -1;
+
+    // bounce off player
+    if (player.alive && Math.hypot((player.x + player.w / 2) - b.x, (player.y + player.h / 2) - b.y) < b.r + 18) {
+      if (player.invuln <= 0) { damagePlayer(1); }
+      b.vy *= -1.5; b.vx += rand(-1, 1);
+    }
+
+    // damageable by bolts
+  }
+}
+
+/* =====================================================================
+   TOKENS & CHECKPOINTS
+   ===================================================================== */
+function updatePickups() {
+  for (const t of tokens) {
+    if (t.taken) continue;
+    if (player.alive &&
+        Math.hypot((player.x + player.w / 2) - t.x, (player.y + player.h / 2) - t.y) < 26) {
+      t.taken = true;
+      tokensCollected++;
+      score += 25;
+      spawnSpark(t.x, t.y, "#ffd54f");
+      spawnFloatingText(t.x, t.y - 16, "+25", "#ffd54f");
+    }
+  }
+
+  for (const c of checkpoints) {
+    if (!c.active && player.alive &&
+        Math.abs(player.x - c.x) < 30 && player.y > c.y - 60) {
+      c.active = true;
+      player.checkpointX = c.x;
+      player.checkpointY = c.y - 50;
+      score += 100;
+      spawnSpark(c.x, c.y, "#59ffd0");
+      spawnFloatingText(c.x, c.y - 30, "CHECKPOINT +100", "#59ffd0");
+    }
+  }
+}
+
+/* =====================================================================
+   BOLTS (player projectiles)
+   ===================================================================== */
+function updateBolts() {
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    const b = bolts[i];
+    b.x += b.vx;
+    b.life--;
+    b.y += Math.sin(b.x * 0.2) * 0.4; // little wiggle
+
+    if (b.life <= 0 || b.x < camX - 50 || b.x > camX + W + 50) {
+      bolts.splice(i, 1);
+      continue;
+    }
+
+    let hit = false;
+    // vs enemies
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (overlap(b, e)) {
+        hit = true;
+        e.health--;
+        if (e.kind === "terminal" && e.health > 0) {
+          spawnSpark(b.x, b.y, "#ff5f6d");
+        }
+        if (e.health <= 0) {
+          e.alive = false;
+          score += e.kind === "terminal" ? 150 : 100;
+          spawnFloatingText(e.x, e.y - 20, "+" + (e.kind === "terminal" ? 150 : 100), "#7dfaff");
+          spawnExplosion(e.x + e.w / 2, e.y + e.h / 2, e.kind === "terminal" ? 14 : 10, "#7dfaff");
+        }
+        break;
+      }
+    }
+    // vs bubbles
+    if (!hit) {
+      for (const bu of bubbles) {
+        if (!bu.alive) continue;
+        if (Math.hypot(b.x + b.w / 2 - bu.x, b.y + b.h / 2 - bu.y) < bu.r + 12) {
+          bu.alive = false;
+          hit = true;
+          score += 50;
+          spawnFloatingText(bu.x, bu.y - 12, "+50", "#c58bff");
+          spawnExplosion(bu.x, bu.y, 6, "#c58bff");
+          break;
+        }
+      }
+    }
+    // vs boss
+    if (!hit && !boss.dead &&
+        overlap(b, { x: boss.x, y: boss.y, w: boss.w, h: boss.h })) {
+      hit = true;
+      bossHit(b);
+    }
+    if (hit) bolts.splice(i, 1);
+  }
+
+  // boss bolts / error cubes
+  for (let i = bossBolts.length - 1; i >= 0; i--) {
+    const b = bossBolts[i];
+    b.x += b.vx;
+    b.y += b.vy;
+    b.life--;
+    b.y += Math.sin(b.x * 0.15) * 0.5;
+    if (b.life <= 0) { bossBolts.splice(i, 1); continue; }
+
+    // hit player
+    if (player.alive && Math.hypot((player.x + player.w / 2) - b.x, (player.y + player.h / 2) - b.y) < b.r + 16) {
+      bossBolts.splice(i, 1);
+      damagePlayer(1);
+      spawnExplosion(b.x, b.y, 8, "#ff5f6d");
+      continue;
+    }
+
+    // collide with ground
+    if (b.y > GROUND_Y - b.r) {
+      bossBolts.splice(i, 1);
+      spawnExplosion(b.x, GROUND_Y, 6, "#ff5f6d");
+    }
+  }
+}
+
+function bossHit(b) {
+  boss.health--;
+  score += 10;
+  spawnExplosion(b.x, b.y, 8, "#ffd54f");
+  boss.glitch = 10;
+  if (boss.health <= 0) {
+    boss.dead = true;
+    boss.deadTimer = 0;
+    score += 5000;
+    spawnFloatingText(boss.x + boss.w / 2, boss.y - 30, "BOSS DOWN +5000", "#ffd54f");
+    spawnExplosion(boss.x + boss.w / 2, boss.y + boss.h / 2, 40, "#ff5f6d");
+  }
+}
+
+/* =====================================================================
+   BOSS LOGIC
+   ===================================================================== */
+function updateBoss() {
+  if (boss.dead) {
+    boss.deadTimer++;
+    // continuous explosion effect while dying
+    if (boss.deadTimer % 6 === 0) {
+      spawnExplosion(boss.x + rand(0, boss.w), boss.y + rand(0, boss.h), 14, rand(0,1) < 0.5 ? "#ff5f6d" : "#ffd54f");
+    }
+    if (boss.deadTimer > 150 && winTimer === 0) {
+      winTimer = 60; // brief pause before win screen
+    }
+    if (winTimer > 0) winTimer--;
+    if (winTimer === 1 && state === STATE_PLAYING) {
+      state = STATE_WIN;
+    }
+    return;
+  }
+
+  boss.hoverTimer++;
+  boss.spawnWave += 0.06;
+  boss.glitch = Math.max(0, boss.glitch - 1);
+
+  // hover bob
+  boss.y = 240 + Math.sin(boss.hoverTimer * 0.03) * 26;
+
+  // slow drift toward player
+  const dx = (player.x + player.w / 2) - (boss.x + boss.w / 2);
+  if (Math.abs(dx) > 60) {
+    boss.facing = dx > 0 ? 1 : -1;
+    boss.x += Math.sign(dx) * 1.2;
+  }
+  boss.x = clamp(boss.x, WIN_X + 20, LEVEL_LENGTH - 160);
+
+  // attack cycle
+  boss.nextAttack--;
+  if (boss.nextAttack <= 0) {
+    boss.nextAttack = randi(110, 190);
+    // phase-based behaviour: phase 2 = more attacks
+    const burst = boss.health < boss.maxHealth / 2 ? 6 : 3;
+    for (let i = 0; i < burst; i++) {
+      const ang = rand(-Math.PI * 0.8, -Math.PI * 0.2);
+      bossBolts.push({
+        x: boss.x + boss.w / 2, y: boss.y + 30,
+        vx: Math.cos(ang) * 5 + (i - burst / 2) * 0.6,
+        vy: Math.sin(ang) * 5 - 2,
+        r: 10 + rand(-2, 3), kind: "glitch", life: 500,
+      });
+    }
+    spawnFloatingText(boss.x + boss.w / 2, boss.y - 40, "GLITCH BURST!", "#c58bff");
+  }
+
+  // melee swipe if close
+  if (Math.abs(dx) < 70 && player.alive && boss.hoverTimer % 140 < 10) {
+    if (player.invuln <= 0) damagePlayer(1);
+  }
+}
+
+/* =====================================================================
+   WIN CONDITION
+   ===================================================================== */
+function updateWin() {
+  if (state !== STATE_PLAYING) return;
+  if (boss.dead && boss.deadTimer > 150) {
+    // handled in updateBoss
+  }
+}
+
+/* =====================================================================
+   EFFECTS
+   ===================================================================== */
+function spawnExplosion(x, y, n, color) {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x, y,
+      vx: rand(-4, 4), vy: rand(-4, 4),
+      life: randi(20, 40), maxLife: 40,
+      color, size: rand(2, 5),
+    });
+  }
+}
+
+function spawnDust(x, y, n) {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x: x + rand(-8, 8), y: y + rand(0, 6),
+      vx: rand(-2, 2), vy: rand(-3, -0.5),
+      life: randi(12, 22), maxLife: 22,
+      color: "#b8a5e0", size: rand(1.5, 3.5),
+    });
+  }
+}
+
+function spawnSpark(x, y, color) {
+  for (let i = 0; i < 5; i++) {
+    particles.push({
+      x, y,
+      vx: rand(-2.5, 2.5), vy: rand(-2.5, 2.5),
+      life: randi(8, 16), maxLife: 16,
+      color, size: rand(1, 2.5),
+    });
+  }
+}
+
+let floatTexts = [];
+function spawnFloatingText(x, y, txt, color) {
+  floatTexts.push({ x, y, txt, color, life: 60, maxLife: 60 });
+}
+
+function updateEffects() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.08;
+    p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.x += s.vx; s.y += s.vy;
+    s.life--;
+    if (s.life <= 0) sparks.splice(i, 1);
+  }
+  for (let i = floatTexts.length - 1; i >= 0; i--) {
+    const f = floatTexts[i];
+    f.y -= 0.6;
+    f.life--;
+    if (f.life <= 0) floatTexts.splice(i, 1);
+  }
+  if (shake > 0) shake--;
+}
+
+/* =====================================================================
+   UPDATE LOOP
+   ===================================================================== */
+function update() {
+  if (state !== STATE_PLAYING) return;
+  gameTimer++;
+
+  updatePlayer();
+  updateEnemies();
+  updateBoss();
+  updatePickups();
+  updateBolts();
+  updateEffects();
+  updateCamera();
+  updateWin();
+}
+
+/* =====================================================================
+   RENDERING — PARALLAX BACKGROUND
+   ===================================================================== */
+function drawBackground() {
+  const par = 0.2;
+
+  // sky gradient: dusk cyber beach
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, "#1a0b33");
+  grad.addColorStop(0.45, "#3d1260");
+  grad.addColorStop(0.75, "#7a2b4d");
+  grad.addColorStop(1, "#b04a3a");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // distant neon sun / moon
+  const sunX = W * 0.72 - camX * 0.02;
+  const sunY = 130;
+  const sg = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 120);
+  sg.addColorStop(0, "#ffd54f");
+  sg.addColorStop(0.35, "#ff8a5c");
+  sg.addColorStop(1, "rgba(255,138,92,0)");
+  ctx.fillStyle = sg;
+  ctx.fillRect(sunX - 130, sunY - 130, 260, 260);
+  ctx.fillStyle = "#ffe9a3";
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 46, 0, Math.PI * 2);
+  ctx.fill();
+
+  // far layer: server towers skyline
+  ctx.fillStyle = "#2b1150";
+  for (let i = -1; i < 40; i++) {
+    const tx = i * 180 - (camX * 0.35) % 180;
+    const th = 120 + Math.sin(i * 12.9898) * 60;
+    ctx.fillRect(tx, H - 200 - th + (camX * 0.35) % 20 * 0, 70, th + 100);
+    // tiny windows
+    ctx.fillStyle = "#ffd54f33";
+    for (let w = 0; w < 3; w++) {
+      for (let h2 = 0; h2 < 4; h2++) {
+        if ((i + w + h2) % 3 === 0) ctx.fillRect(tx + 12 + w * 20, H - 160 - th + h2 * 24, 8, 10);
+      }
+    }
+    ctx.fillStyle = "#2b1150";
+  }
+
+  // middle layer: palm trees + antenna masts
+  for (let i = -1; i < 50; i++) {
+    const px = i * 260 - (camX * 0.55) % 260;
+    const type = i % 3;
+    if (type === 0) {
+      // palm tree
+      ctx.fillStyle = "#4a2470";
+      ctx.fillRect(px + 18, H - 240, 8, 100);
+      ctx.fillStyle = "#5d318a";
+      ctx.beginPath();
+      ctx.arc(px + 22, H - 250, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffd54f33";
+      for (let f = 0; f < 6; f++) {
+        const a = f * Math.PI / 3;
+        ctx.beginPath();
+        ctx.ellipse(px + 22 + Math.cos(a) * 22, H - 250 + Math.sin(a) * 10, 18, 6, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (type === 1) {
+      // antenna mast with blinking light
+      ctx.strokeStyle = "#3b1c66";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(px + 20, H - 230);
+      ctx.lineTo(px + 26, H - 340);
+      ctx.stroke();
+      ctx.fillStyle = (gameTimer % 50 < 25) ? "#ff5f6d" : "#59ffd0";
+      ctx.beginPath();
+      ctx.arc(px + 26, H - 345, 4, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // datacenter vents
+      ctx.fillStyle = "#311655";
+      ctx.fillRect(px, H - 260, 46, 120);
+      ctx.fillStyle = "#ff5f6d33";
+      for (let v = 0; v < 3; v++) ctx.fillRect(px + 6, H - 250 + v * 16, 34, 6);
+    }
+  }
+}
+
+function drawGround() {
+  // main ground strip: digital sand + circuit board
+  ctx.fillStyle = "#221046";
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+
+  // top lip glow
+  ctx.fillStyle = "#59ffd0";
+  ctx.fillRect(0, GROUND_Y, W, 3);
+  ctx.fillStyle = "#59ffd055";
+  ctx.fillRect(0, GROUND_Y + 3, W, 6);
+
+  // pixel-sand texture
+  ctx.fillStyle = "#33225c";
+  for (let x = 0; x < W + 40; x += 24) {
+    const gx = x + Math.floor(camX) % 24;
+    ctx.fillRect(gx, GROUND_Y + 14 + (x % 3) * 8, 10, 6);
+  }
+
+  // circuit traces
+  ctx.strokeStyle = "#7a2bff44";
+  ctx.lineWidth = 2;
+  for (let x = 0; x < W + 60; x += 90) {
+    const gx = x - Math.floor(camX) % 90;
+    ctx.beginPath();
+    ctx.moveTo(gx, GROUND_Y + 30 + (x % 5) * 7);
+    ctx.lineTo(gx + 45, GROUND_Y + 30 + (x % 5) * 7);
+    ctx.lineTo(gx + 45, GROUND_Y + 46);
+    ctx.stroke();
+  }
+}
+
+function drawPlatform(p) {
+  if (p.type === "wood") {
+    ctx.fillStyle = "#8a5a2b";
+    ctx.fillRect(p.x - camX, p.y, p.w, p.h);
+    ctx.fillStyle = "#a87840";
+    ctx.fillRect(p.x - camX, p.y, p.w, 5);
+    ctx.fillStyle = "#5d3a1a";
+    ctx.fillRect(p.x - camX, p.y + 5, p.w, 3);
+    // plank lines
+    ctx.strokeStyle = "#5d3a1a";
+    for (let i = 0; i < p.w; i += 22) {
+      ctx.beginPath();
+      ctx.moveTo(p.x - camX + i, p.y + 4);
+      ctx.lineTo(p.x - camX + i, p.y + 12);
+      ctx.stroke();
+    }
+  } else if (p.type === "metal") {
+    ctx.fillStyle = "#3d3f68";
+    ctx.fillRect(p.x - camX, p.y, p.w, p.h);
+    ctx.fillStyle = "#6b6fa8";
+    ctx.fillRect(p.x - camX, p.y, p.w, 4);
+    ctx.fillStyle = "#2a2c4a";
+    ctx.fillRect(p.x - camX, p.y + 8, p.w, 3);
+    ctx.fillStyle = "#59ffd055";
+    ctx.fillRect(p.x - camX + p.w / 2 - 6, p.y + 1, 12, 2);
+    // bolts
+    ctx.fillStyle = "#ffd54f";
+    for (let i = 6; i < p.w - 4; i += 26) {
+      ctx.beginPath();
+      ctx.arc(p.x - camX + i, p.y + 6, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else {
+    ctx.fillStyle = "#221046";
+    ctx.fillRect(p.x - camX, p.y, p.w, p.h);
+  }
+}
+
+/* =====================================================================
+   RENDERING — CHARACTERS
+   ===================================================================== */
+function drawPlayer() {
+  if (!player.alive) {
+    // draw ghostly signal while waiting to respawn
+    ctx.globalAlpha = 0.4 + Math.sin(gameTimer * 0.2) * 0.2;
+    drawHermes(0.8, true);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  // blinking when invulnerable
+  if (player.invuln > 0 && Math.floor(gameTimer / 4) % 2 === 0) ctx.globalAlpha = 0.4;
+
+  drawHermes(1, false);
+
+  ctx.globalAlpha = 1;
+}
+
+function drawHermes(scale, ghost) {
+  const px = player.x - camX;
+  const py = player.y;
+  const f = player.facing;
+
+  ctx.save();
+  ctx.translate(px + player.w / 2, py + player.h);
+
+  if (f === -1) ctx.scale(-1, 1);
+  ctx.scale(scale, scale);
+
+  // cape (flapping with wind)
+  const flap = Math.sin(player.capeWave) * 6 + (player.onGround ? 0 : 10);
+  ctx.fillStyle = ghost ? "#7dfaff" : "#5d318a";
+  ctx.beginPath();
+  ctx.moveTo(-2, -6);
+  ctx.quadraticCurveTo(-16, -2 + flap, -22, 10 + flap * 1.4);
+  ctx.quadraticCurveTo(-10, 6 + flap, -4, 0);
+  ctx.fill();
+  ctx.fillStyle = ghost ? "#c58bff" : "#7a2bff";
+  ctx.beginPath();
+  ctx.moveTo(-2, -6);
+  ctx.quadraticCurveTo(-12, 2 + flap, -18, 8 + flap * 1.3);
+  ctx.quadraticCurveTo(-8, 4 + flap, -4, 0);
+  ctx.fill();
+
+  // hooded body (terminal explorer robe)
+  ctx.fillStyle = ghost ? "#b8e8ff" : "#3b2a6b";
+  ctx.beginPath();
+  ctx.moveTo(-11, 0);
+  ctx.lineTo(-7, -22);
+  ctx.lineTo(7, -22);
+  ctx.lineTo(11, 0);
+  ctx.quadraticCurveTo(11, 8, 6, 8);
+  ctx.lineTo(-6, 8);
+  ctx.quadraticCurveTo(-11, 8, -11, 0);
+  ctx.fill();
+
+  // hood
+  ctx.fillStyle = ghost ? "#eaffff" : "#4d3590";
+  ctx.beginPath();
+  ctx.moveTo(-9, -16);
+  ctx.quadraticCurveTo(0, -30, 9, -16);
+  ctx.quadraticCurveTo(9, -10, 7, -10);
+  ctx.quadraticCurveTo(0, -16, -7, -10);
+  ctx.quadraticCurveTo(-9, -10, -9, -16);
+  ctx.fill();
+
+  // glowing eyes
+  const glow = 6 + Math.sin(gameTimer * 0.15) * 2;
+  ctx.shadowColor = "#59ffd0";
+  ctx.shadowBlur = ghost ? 0 : glow;
+  ctx.fillStyle = "#59ffd0";
+  ctx.fillRect(1, -20, 3, 3);
+  ctx.fillRect(6, -20, 3, 3);
+  ctx.shadowBlur = 0;
+
+  // little boots
+  ctx.fillStyle = ghost ? "#ffffff" : "#1d1236";
+  ctx.fillRect(-8, 4, 6, 4);
+  ctx.fillRect(2, 4, 6, 4);
+
+  // terminal badge on chest
+  ctx.fillStyle = "#ffd54f";
+  ctx.fillRect(-2, -12, 4, 3);
+
+  ctx.restore();
+}
+
+function drawEnemyShellfish(e) {
+  const s = e.size || 1;
+  const ex = e.x - camX;
+  const ey = e.y;
+
+  ctx.save();
+  ctx.translate(ex + e.w / 2, ey + e.h / 2);
+
+  // crab-like body with corrupted shell
+  ctx.fillStyle = "#e0527a";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 16 * s, 11 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // shell ridges (corrupted pixels)
+  ctx.fillStyle = "#8a2b5c";
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.arc(i * 8 * s, -2 * s, 4 * s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // glitchy pixels on shell
+  ctx.fillStyle = "#ffd54f";
+  if (Math.floor(gameTimer / 6) % 2 === 0) ctx.fillRect(-12 * s, -4 * s, 4 * s, 4 * s);
+  ctx.fillStyle = "#59ffd0";
+  if (Math.floor(gameTimer / 9) % 2 === 0) ctx.fillRect(6 * s, 4 * s, 4 * s, 4 * s);
+
+  // mismatched claws
+  ctx.strokeStyle = "#ff8aa8";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(12 * s, 2 * s);
+  ctx.lineTo(22 * s, -4 * s);
+  ctx.lineTo(26 * s, 0);
+  ctx.moveTo(-12 * s, 2 * s);
+  ctx.lineTo(-22 * s, 8 * s);
+  ctx.lineTo(-26 * s, 4 * s);
+  ctx.stroke();
+
+  // little legs
+  ctx.strokeStyle = "#b04070";
+  ctx.lineWidth = 2;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 6 * s, 8 * s);
+    ctx.lineTo(i * 8 * s - 3, 14 * s);
+    ctx.moveTo(i * 6 * s, 8 * s);
+    ctx.lineTo(i * 8 * s + 3, 14 * s);
+    ctx.stroke();
+  }
+
+  // one eye glowing
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(4 * s, -6 * s, 3.5 * s, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ff5f6d";
+  ctx.beginPath();
+  ctx.arc(4 * s, -6 * s, 1.8 * s, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawEnemyTerminal(e) {
+  const ex = e.x - camX;
+  const ey = e.y;
+
+  // monitor housing
+  ctx.fillStyle = "#3d3f68";
+  ctx.fillRect(ex - 4, ey - 8, e.w + 8, e.h + 8);
+  // screen
+  ctx.fillStyle = "#0d0a1a";
+  ctx.fillRect(ex + 3, ey, e.w - 6, e.h - 16);
+  // glitchy screen content
+  ctx.font = "12px monospace";
+  ctx.fillStyle = "#ff5f6d";
+  ctx.fillText("ERR", ex + 8, ey + 18);
+  ctx.fillStyle = "#59ffd0";
+  ctx.fillText("_~", ex + 12, ey + 30);
+  if (e.screen > 0.5) {
+    ctx.fillStyle = "#ffd54f";
+    ctx.fillRect(ex + 6, ey + 22, 20, 4);
+  }
+  // eyes (two glowing vents)
+  ctx.fillStyle = "#ff5f6d";
+  ctx.beginPath();
+  ctx.arc(ex + 8, ey - 12, 3, 0, Math.PI * 2);
+  ctx.arc(ex + e.w - 8, ey - 12, 3, 0, Math.PI * 2);
+  ctx.fill();
+  // antenna
+  ctx.strokeStyle = "#6b6fa8";
+  ctx.beginPath();
+  ctx.moveTo(ex + e.w / 2, ey - 8);
+  ctx.lineTo(ex + e.w / 2, ey - 20);
+  ctx.stroke();
+  ctx.fillStyle = "#ff5f6d";
+  ctx.beginPath();
+  ctx.arc(ex + e.w / 2, ey - 22, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBubble(b) {
+  const wob = Math.sin(b.wobble) * 3;
+  ctx.strokeStyle = "#c58bff";
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  ctx.arc(b.x - camX + wob * 0.3, b.y + wob * 0.5, b.r, 0, Math.PI * 2);
+  ctx.stroke();
+  // "ERR" text inside
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = "#c58bff";
+  ctx.font = Math.max(8, b.r) + "px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("err", b.x - camX + wob * 0.3, b.y + wob * 0.5 + 4);
+  ctx.textAlign = "left";
+  ctx.globalAlpha = 1;
+}
+
+function drawToken(t) {
+  const bob = Math.sin(gameTimer * 0.1 + t.x * 0.05) * 4;
+  const tx = t.x - camX;
+  const ty = t.y + bob;
+
+  ctx.shadowColor = "#ffd54f";
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = "#ffd54f";
+  ctx.beginPath();
+  ctx.arc(tx, ty, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // token symbol: terminal bracket <_>
+  ctx.fillStyle = "#7a5b00";
+  ctx.font = "bold 10px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("<_>", tx, ty + 4);
+  ctx.textAlign = "left";
+  // shine
+  ctx.fillStyle = "#ffffff88";
+  ctx.beginPath();
+  ctx.arc(tx - 3, ty - 3, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCheckpoint(c) {
+  const cx = c.x - camX;
+  const cy = c.y;
+  // pole
+  ctx.fillStyle = "#6b6fa8";
+  ctx.fillRect(cx + 10, cy - 40, 6, 54);
+  // flag
+  const active = c.active;
+  const wave = Math.sin(gameTimer * 0.1) * 3;
+  ctx.fillStyle = active ? "#59ffd0" : "#ff5f6d";
+  ctx.beginPath();
+  ctx.moveTo(cx + 16, cy - 40);
+  ctx.lineTo(cx + 40 + (active ? wave : 0), cy - 32);
+  ctx.lineTo(cx + 16, cy - 24);
+  ctx.fill();
+  // glowing orb at top
+  ctx.shadowColor = active ? "#59ffd0" : "#ff5f6d";
+  ctx.shadowBlur = active ? 12 : 6;
+  ctx.fillStyle = active ? "#7dffe0" : "#ff8aa8";
+  ctx.beginPath();
+  ctx.arc(cx + 13, cy - 42, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // label
+  if (!active) {
+    ctx.fillStyle = "#ffffff88";
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("SAVE", cx + 20, cy + 10);
+    ctx.textAlign = "left";
+  } else {
+    ctx.fillStyle = "#59ffd088";
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("SAVED", cx + 20, cy + 10);
+    ctx.textAlign = "left";
+  }
+}
+
+function drawBolt(b) {
+  const bx = b.x - camX;
+  const by = b.y;
+  // glowing prompt bolt
+  ctx.shadowColor = b.color;
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = b.color;
+  ctx.fillRect(bx, by, b.w, b.h);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(bx + 2, by + 2, b.w - 4, b.h - 4);
+  ctx.fillStyle = b.color;
+  ctx.fillRect(bx + 4, by + 3, b.w - 8, b.h - 6);
+  // trailing sparks
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = b.color + "66";
+  ctx.fillRect(bx - b.vx * 2, by + 1, 6, 3);
+}
+
+function drawBossBolt(b) {
+  const bx = b.x - camX;
+  const by = b.y;
+  ctx.shadowColor = "#c58bff";
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = "#c58bff";
+  ctx.lineWidth = 2;
+  ctx.fillStyle = "rgba(197,139,255,0.4)";
+  ctx.beginPath();
+  ctx.arc(bx, by, b.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(bx, by, b.r * 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#c58bff";
+  ctx.font = "8px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("!", bx, by + 3);
+  ctx.textAlign = "left";
+}
+
+/* =====================================================================
+   RENDERING — BOSS (CYBER-LOBSTER)
+   ===================================================================== */
+function drawBoss() {
+  if (boss.dead && boss.deadTimer > 120) {
+    // mostly destroyed: draw wreckage
+    ctx.globalAlpha = Math.max(0, 1 - (boss.deadTimer - 120) / 60);
+    drawLobster(true);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  drawLobster(false);
+}
+
+function drawLobster(dying) {
+  const bx = boss.x - camX;
+  const by = boss.y;
+  const f = boss.facing;
+  const g = boss.glitch;
+
+  ctx.save();
+  ctx.translate(bx + boss.w / 2, by + boss.h / 2);
+  if (f === -1) ctx.scale(-1, 1);
+
+  // glitch displacement effect
+  const gx = g > 0 ? rand(-4, 4) : 0;
+  ctx.translate(gx, 0);
+
+  // --- tail segments (stacked behind) ---
+  ctx.fillStyle = "#5d2b8a";
+  for (let i = 0; i < 4; i++) {
+    const segX = -30 - i * 18;
+    const segY = 20 + Math.sin(gameTimer * 0.1 + i) * 4;
+    ctx.beginPath();
+    ctx.arc(segX, segY, 20 - i * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // tail spikes
+  ctx.fillStyle = "#c58bff";
+  for (let i = 0; i < 4; i++) {
+    const segX = -34 - i * 18;
+    ctx.beginPath();
+    ctx.moveTo(segX - 4, 8);
+    ctx.lineTo(segX, -4);
+    ctx.lineTo(segX + 4, 8);
+    ctx.fill();
+  }
+
+  // --- shell armour (distorted carapace) ---
+  ctx.fillStyle = dying ? "#4a2b5e" : "#7a2bff";
+  ctx.beginPath();
+  ctx.moveTo(-40, 10);
+  ctx.quadraticCurveTo(-50, -50, 0, -70);
+  ctx.quadraticCurveTo(50, -60, 55, 0);
+  ctx.quadraticCurveTo(30, 30, 10, 25);
+  ctx.quadraticCurveTo(-20, 30, -40, 10);
+  ctx.fill();
+
+  // armour plates
+  ctx.fillStyle = "#9b5bff";
+  ctx.beginPath();
+  ctx.moveTo(-20, -30);
+  ctx.quadraticCurveTo(0, -58, 25, -42);
+  ctx.quadraticCurveTo(10, -14, -6, -16);
+  ctx.fill();
+  ctx.fillStyle = "#c58bff";
+  ctx.beginPath();
+  ctx.moveTo(-34, -4);
+  ctx.quadraticCurveTo(-20, -34, 0, -40);
+  ctx.quadraticCurveTo(-6, -12, -22, -2);
+  ctx.fill();
+
+  // glitchy pixel patches on shell
+  if (Math.floor(gameTimer / 5) % 2 === 0) {
+    ctx.fillStyle = "#ff5f6d";
+    ctx.fillRect(-30, -50, 12, 6);
+    ctx.fillRect(20, -20, 10, 8);
+  }
+  if (Math.floor(gameTimer / 8) % 2 === 0) {
+    ctx.fillStyle = "#59ffd0";
+    ctx.fillRect(-10, -60, 8, 6);
+  }
+
+  // --- mismatched claws ---
+  // big claw (right): huge, blocky
+  ctx.fillStyle = "#ff5f6d";
+  ctx.fillRect(40, -30, 30, 14);
+  ctx.fillRect(60, -38, 14, 16);
+  ctx.fillRect(48, -44, 10, 12);
+  // claw pincers
+  ctx.fillStyle = "#ff8aa8";
+  ctx.fillRect(66, -48, 8, 8);
+  ctx.fillRect(66, -16, 8, 8);
+  // small claw (left): spindly
+  ctx.strokeStyle = "#ff8aa8";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(-38, 6);
+  ctx.lineTo(-58, -6);
+  ctx.lineTo(-66, -14);
+  ctx.stroke();
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-58, -6);
+  ctx.lineTo(-66, 2);
+  ctx.stroke();
+  // small claw pincer
+  ctx.fillStyle = "#ff8aa8";
+  ctx.beginPath();
+  ctx.arc(-66, -8, 4, 0, Math.PI * 2);
+  ctx.arc(-66, 2, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- legs ---
+  ctx.strokeStyle = "#5d2b8a";
+  ctx.lineWidth = 4;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 14, 14);
+    ctx.lineTo(i * 18, 34 + Math.sin(gameTimer * 0.15 + i) * 3);
+    ctx.stroke();
+  }
+
+  // --- glowing eyes (on stalks) ---
+  const eyeGlow = 8 + Math.sin(gameTimer * 0.2) * 3;
+  ctx.shadowColor = "#ff5f6d";
+  ctx.shadowBlur = dying ? 0 : eyeGlow;
+  ctx.strokeStyle = "#3b1c66";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-8, -40);
+  ctx.lineTo(-16, -58);
+  ctx.moveTo(8, -40);
+  ctx.lineTo(20, -56);
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(-16, -58, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ff5f6d";
+  ctx.beginPath();
+  ctx.arc(-16, -58, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(20, -56, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffd54f";
+  ctx.beginPath();
+  ctx.arc(20, -56, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // antennae
+  ctx.strokeStyle = "#c58bff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-30, -30);
+  ctx.quadraticCurveTo(-40, -60, -52, -66);
+  ctx.moveTo(30, -30);
+  ctx.quadraticCurveTo(40, -62, 54, -70);
+  ctx.stroke();
+  ctx.fillStyle = "#c58bff";
+  ctx.beginPath();
+  ctx.arc(-52, -66, 3, 0, Math.PI * 2);
+  ctx.arc(54, -70, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // "ROOT" crown wires (terminal cyber addon)
+  ctx.strokeStyle = "#59ffd0";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-20 + i * 12, -64);
+    ctx.lineTo(-26 + i * 14, -78 - (i % 2) * 4);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/* =====================================================================
+   RENDERING — HUD & SCREENS
+   ===================================================================== */
+function drawHUD() {
+  // health bar
+  ctx.fillStyle = "#000000aa";
+  ctx.fillRect(16, 14, 160, 18);
+  ctx.strokeStyle = "#59ffd0";
+  ctx.strokeRect(16, 14, 160, 18);
+  const hpRatio = clamp(player.health / player.maxHealth, 0, 1);
+  const hpGrad = ctx.createLinearGradient(16, 0, 176, 0);
+  hpGrad.addColorStop(0, "#ff5f6d");
+  hpGrad.addColorStop(1, "#ffd54f");
+  ctx.fillStyle = hpGrad;
+  ctx.fillRect(18, 16, 156 * hpRatio, 14);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 12px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("HP", 22, 28);
+
+  // score
+  ctx.fillStyle = "#ffd54f";
+  ctx.font = "bold 16px monospace";
+  ctx.textAlign = "right";
+  ctx.fillText("SCORE " + String(score).padStart(6, "0"), W - 20, 28);
+
+  // tokens
+  ctx.fillStyle = "#7dfaff";
+  ctx.font = "13px monospace";
+  ctx.fillText("TOKENS <_> " + tokensCollected + "/" + totalTokens, W - 20, 50);
+
+  // timer
+  ctx.fillStyle = "#b8f2ff";
+  ctx.font = "12px monospace";
+  ctx.fillText("T+" + Math.floor(gameTimer / 60) + "s", W - 20, 70);
+
+  // progress bar (journey to the boss)
+  const progW = 220;
+  const progX = (W - progW) / 2;
+  ctx.fillStyle = "#000000aa";
+  ctx.fillRect(progX, 14, progW, 12);
+  ctx.strokeStyle = "#7a2bff";
+  ctx.strokeRect(progX, 14, progW, 12);
+  const prog = clamp((player.x - 100) / (WIN_X - 100), 0, 1);
+  ctx.fillStyle = "#59ffd0";
+  ctx.fillRect(progX + 1, 15, (progW - 2) * prog, 10);
+  // boss icon at end of progress bar
+  ctx.fillStyle = "#ff5f6d";
+  ctx.beginPath();
+  ctx.arc(progX + progW + 12, 20, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // boss health bar (when in arena)
+  if (player.x > WIN_X - 300 && !boss.dead) {
+    const bw = 420;
+    const bx2 = (W - bw) / 2;
+    ctx.fillStyle = "#000000aa";
+    ctx.fillRect(bx2, 40, bw, 22);
+    ctx.strokeStyle = "#ff5f6d";
+    ctx.strokeRect(bx2, 40, bw, 22);
+    const bRatio = clamp(boss.health / boss.maxHealth, 0, 1);
+    const bg = ctx.createLinearGradient(bx2, 0, bx2 + bw, 0);
+    bg.addColorStop(0, "#ff5f6d");
+    bg.addColorStop(1, "#c58bff");
+    ctx.fillStyle = bg;
+    ctx.fillRect(bx2 + 2, 42, (bw - 4) * bRatio, 18);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 13px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("CYBER-LOBSTER ROOT", bx2 + bw / 2, 57);
+    ctx.textAlign = "left";
+  }
+}
+
+function drawStartScreen() {
+  ctx.fillStyle = "rgba(10,6,20,0.88)";
+  ctx.fillRect(0, 0, W, H);
+
+  // floating background decorations
+  for (let i = 0; i < 14; i++) {
+    const fx = (Math.sin(i * 12.9898 + gameTimer * 0.01) * 0.5 + 0.5) * W;
+    const fy = (Math.cos(i * 78.233 + gameTimer * 0.013) * 0.5 + 0.5) * H;
+    ctx.fillStyle = i % 2 ? "#59ffd033" : "#ffd54f22";
+    ctx.fillRect(fx, fy, 6, 6);
+  }
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#59ffd0";
+  ctx.font = "bold 44px monospace";
+  ctx.shadowColor = "#59ffd0";
+  ctx.shadowBlur = 20;
+  ctx.fillText("HERMES AGENT", W / 2, 140);
+  ctx.fillStyle = "#ffd54f";
+  ctx.font = "bold 30px monospace";
+  ctx.shadowColor = "#ffd54f";
+  ctx.shadowBlur = 14;
+  ctx.fillText(":: CYBER-SHORE SHOWDOWN ::", W / 2, 185);
+  ctx.shadowBlur = 0;
+
+  // story blurb
+  ctx.fillStyle = "#b8f2ff";
+  ctx.font = "15px monospace";
+  ctx.fillText("A tiny hooded terminal explorer must cross the glitched digital shoreline", W / 2, 240);
+  ctx.fillText("and face the disfigured CYBER-LOBSTER ROOT.", W / 2, 262);
+
+  // controls list
+  ctx.fillStyle = "#ffd54f";
+  ctx.font = "bold 15px monospace";
+  ctx.fillText("CONTROLS", W / 2, 310);
+  ctx.fillStyle = "#c5e8ff";
+  ctx.font = "14px monospace";
+  const controls = [
+    "WASD / ARROWS  —  move",
+    "SPACE / W      —  jump",
+    "J or CLICK     —  fire prompt bolts",
+    "R              —  restart (after win/game over)",
+  ];
+  for (let i = 0; i < controls.length; i++) {
+    ctx.fillText(controls[i], W / 2, 335 + i * 22);
+  }
+
+  // mission goal
+  ctx.fillStyle = "#c58bff";
+  ctx.font = "13px monospace";
+  ctx.fillText("MISSION: collect tokens, reach checkpoints, defeat the boss.", W / 2, 445);
+
+  // pulsing start prompt
+  if (Math.floor(gameTimer / 30) % 2 === 0) {
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 20px monospace";
+    ctx.shadowColor = "#ffd54f";
+    ctx.shadowBlur = 12;
+    ctx.fillText("PRESS ENTER OR CLICK TO START", W / 2, 495);
+    ctx.shadowBlur = 0;
+  }
+  ctx.textAlign = "left";
+}
+
+function drawGameOverScreen() {
+  ctx.fillStyle = "rgba(20,5,10,0.85)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ff5f6d";
+  ctx.font = "bold 48px monospace";
+  ctx.shadowColor = "#ff5f6d";
+  ctx.shadowBlur = 16;
+  ctx.fillText("SIGNAL LOST", W / 2, H / 2 - 40);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#b8f2ff";
+  ctx.font = "17px monospace";
+  ctx.fillText("The Hermes Agent was corrupted by the shore.", W / 2, H / 2 + 10);
+  ctx.fillStyle = "#ffd54f";
+  ctx.fillText("SCORE: " + score + "   TOKENS: " + tokensCollected + "/" + totalTokens, W / 2, H / 2 + 45);
+  if (Math.floor(gameTimer / 30) % 2 === 0) {
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText("PRESS R TO REBOOT", W / 2, H / 2 + 90);
+  }
+  ctx.textAlign = "left";
+}
+
+function drawWinScreen() {
+  ctx.fillStyle = "rgba(8,20,10,0.85)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+
+  // celebration confetti
+  for (let i = 0; i < 30; i++) {
+    const cx = (Math.sin(i * 7.13 + gameTimer * 0.05) * 0.5 + 0.5) * W;
+    const cy = (gameTimer * (0.4 + (i % 5) * 0.15) + i * 40) % H;
+    ctx.fillStyle = ["#59ffd0", "#ffd54f", "#ff5f6d", "#c58bff", "#7dfaff"][i % 5];
+    ctx.fillRect(cx, cy, 5, 8);
+  }
+
+  ctx.fillStyle = "#59ffd0";
+  ctx.font = "bold 46px monospace";
+  ctx.shadowColor = "#59ffd0";
+  ctx.shadowBlur = 18;
+  ctx.fillText("CYBER-LOBSTER DOWN!", W / 2, H / 2 - 70);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#ffd54f";
+  ctx.font = "bold 26px monospace";
+  ctx.fillText("THE SHORE IS CLEAN... FOR NOW.", W / 2, H / 2 - 25);
+  ctx.fillStyle = "#b8f2ff";
+  ctx.font = "17px monospace";
+  ctx.fillText("The Hermes Agent saved the terminal beach.", W / 2, H / 2 + 20);
+  ctx.fillStyle = "#ffd54f";
+  ctx.font = "bold 20px monospace";
+  ctx.fillText("SCORE: " + score, W / 2, H / 2 + 60);
+  ctx.fillText("TOKENS: " + tokensCollected + "/" + totalTokens + "   TIME: " + Math.floor(gameTimer / 60) + "s", W / 2, H / 2 + 90);
+  if (Math.floor(gameTimer / 30) % 2 === 0) {
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText("PRESS R TO PLAY AGAIN", W / 2, H / 2 + 140);
+  }
+  ctx.textAlign = "left";
+}
+
+/* =====================================================================
+   MAIN RENDER
+   ===================================================================== */
+function render() {
+  // screen shake offset
+  let sx = 0, sy = 0;
+  if (shake > 0) {
+    sx = rand(-shake, shake) * 0.7;
+    sy = rand(-shake, shake) * 0.7;
+  }
+
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  // always draw world (nice backdrop behind menus)
+  drawBackground();
+
+  // platforms
+  for (const p of platforms) {
+    if (p.x - camX > W + 60 || p.x + p.w - camX < -60) continue;
+    drawPlatform(p);
+  }
+  drawGround();
+
+  // checkpoints
+  for (const c of checkpoints) drawCheckpoint(c);
+
+  // tokens
+  for (const t of tokens) {
+    if (!t.taken) drawToken(t);
+  }
+
+  // enemies
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.kind === "shellfish") drawEnemyShellfish(e);
+    else drawEnemyTerminal(e);
+  }
+
+  // bubbles
+  for (const b of bubbles) {
+    if (b.alive) drawBubble(b);
+  }
+
+  // boss bolts (behind player)
+  for (const b of bossBolts) drawBossBolt(b);
+
+  // player
+  drawPlayer();
+
+  // player bolts
+  for (const b of bolts) drawBolt(b);
+
+  // boss
+  if (player.x > WIN_X - 400 || boss.dead || boss.health < boss.maxHealth) {
+    drawBoss();
+  }
+
+  // particles
+  for (const p of particles) {
+    ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - camX, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // sparks
+  for (const s of sparks) {
+    ctx.globalAlpha = s.life / 8;
+    ctx.fillStyle = s.color;
+    ctx.fillRect(s.x - camX, s.y, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+
+  // floating texts
+  for (const f of floatTexts) {
+    ctx.globalAlpha = clamp(f.life / f.maxLife, 0, 1);
+    ctx.fillStyle = f.color;
+    ctx.font = "bold 14px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(f.txt, f.x - camX, f.y);
+    ctx.textAlign = "left";
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+
+  // HUD & screens (not shaken, not scrolled)
+  if (state === STATE_PLAYING || state === STATE_WIN || state === STATE_GAMEOVER) {
+    drawHUD();
+  }
+  if (state === STATE_START) drawStartScreen();
+  if (state === STATE_GAMEOVER) drawGameOverScreen();
+  if (state === STATE_WIN) drawWinScreen();
+}
+
+/* =====================================================================
+   GAME OVER CHECK
+   ===================================================================== */
+function checkGameOver() {
+  if (state === STATE_PLAYING && player.health <= 0 && player.respawnTimer <= 0) {
+    state = STATE_GAMEOVER;
+  }
+}
+
+/* =====================================================================
+   MAIN LOOP
+   ===================================================================== */
+let lastTime = 0;
+function loop(time) {
+  const dt = Math.min(0.05, (time - lastTime) / 1000 || 0.016);
+  lastTime = time;
+  gameTimer += dt * 60;
+
+  if (state === STATE_PLAYING) update();
+  checkGameOver();
+  render();
+
+  requestAnimationFrame(loop);
+}
+
+/* ---------------- boot ---------------- */
+buildLevel();
+totalTokens = tokens.length;
+resetGame();
+state = STATE_START;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
