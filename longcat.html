@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Agent: Cyber Shoreline</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+  }
+  canvas {
+    border: 2px solid #00ffcc;
+    box-shadow: 0 0 20px #00ffcc44, 0 0 60px #00ffcc22;
+    image-rendering: pixelated;
+    cursor: crosshair;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+// HERMES AGENT: CYBER SHORELINE
+// A side-scrolling platformer through a chaotic digital beach
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Responsive canvas sizing
+function resizeCanvas() {
+  const maxW = window.innerWidth - 20;
+  const maxH = window.innerHeight - 20;
+  const aspect = 16 / 9;
+  if (maxW / maxH > aspect) {
+    canvas.height = Math.min(maxH, 540);
+    canvas.width = canvas.height * aspect;
+  } else {
+    canvas.width = Math.min(maxW, 960);
+    canvas.height = canvas.width / aspect;
+  }
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const GRAVITY = 0.6;
+const PLAYER_SPEED = 3.5;
+const JUMP_FORCE = -12;
+const BULLET_SPEED = 7;
+const ENEMY_SPEED = 1.2;
+const BOSS_HP = 20;
+const WORLD_LENGTH = 6000;
+
+// ============================================================
+// GAME STATE
+// ============================================================
+let gameState = 'start'; // start, playing, win, gameover
+let camera = { x: 0, y: 0 };
+let keys = {};
+let player, enemies, bullets, particles, tokens, platforms, checkpoints;
+let score, playerHP, checkpointActivated, progress, bossTriggered, boss;
+let frameCount, screenShake, glitchTimer;
+
+// ============================================================
+// INPUT HANDLING
+// ============================================================
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyR' && (gameState === 'win' || 'gameover')) restartGame();
+  if (e.code === 'Space' && gameState === 'start') startGame();
+  if (e.code === 'Space' && gameState === 'playing' && player) player.shoot();
+  if ((e.code === 'KeyJ') && gameState === 'playing' && player) player.shoot();
+  e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+canvas.addEventListener('mousedown', e => {
+  if (gameState === 'playing' && player) player.shoot();
+  if (gameState === 'start') startGame();
+});
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
+function rectsCollide(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function lerp(a, b, t) { return a + (b - a) * t; }
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max)); }
+
+// ============================================================
+// PLAYER CLASS
+// ============================================================
+class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.w = 24;
+    this.h = 36;
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.facing = 1;
+    this.animFrame = 0;
+    this.animTimer = 0;
+    this.shootCooldown = 0;
+    this.invincible = 0;
+    this.capePhase = 0;
+  }
+
+  update() {
+    // Horizontal movement
+    this.vx = 0;
+    if (keys['ArrowLeft'] || keys['KeyA']) { this.vx = -PLAYER_SPEED; this.facing = -1; }
+    if (keys['ArrowRight'] || keys['KeyD']) { this.vx = PLAYER_SPEED; this.facing = 1; }
+
+    // Jump
+    if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && this.onGround) {
+      this.vy = JUMP_FORCE;
+      this.onGround = false;
+    }
+
+    // Gravity
+    this.vy += GRAVITY;
+    if (this.vy > 12) this.vy = 12;
+
+    // Move X with collision
+    this.x += this.vx;
+    this.resolveCollisionX(platforms);
+    // Move Y with collision
+    this.y += this.vy;
+    this.onGround = false;
+    this.resolveCollisionY(platforms);
+
+    // World bounds
+    if (this.x < 0) this.x = 0;
+    if (this.x > WORLD_LENGTH - this.w) this.x = WORLD_LENGTH - this.w;
+    if (this.y > 800) { this.takeDamage(3); this.x = Math.max(0, this.x - 200); this.y = 200; }
+
+    // Animation
+    this.animTimer++;
+    if (this.animTimer > 8) { this.animTimer = 0; this.animFrame = (this.animFrame + 1) % 4; }
+    this.capePhase += 0.1;
+
+    // Cooldowns
+    if (this.shootCooldown > 0) this.shootCooldown--;
+    if (this.invincible > 0) this.invincible--;
+  }
+
+  resolveCollisionX(cols) {
+    for (let c of cols) {
+      if (rectsCollide(this, c)) {
+        if (this.vx > 0) this.x = c.x - this.w;
+        else if (this.vx < 0) this.x = c.x + c.w;
+        this.vx = 0;
+      }
+    }
+  }
+
+  resolveCollisionY(cols) {
+    for (let c of cols) {
+      if (rectsCollide(this, c)) {
+        if (this.vy > 0) {
+          this.y = c.y - this.h;
+          this.vy = 0;
+          this.onGround = true;
+        } else if (this.vy < 0) {
+          this.y = c.y + c.h;
+          this.vy = 0;
+        }
+      }
+    }
+  }
+
+  shoot() {
+    if (this.shootCooldown > 0) return;
+    this.shootCooldown = 15;
+    bullets.push(new Bullet(
+      this.x + this.w / 2 + this.facing * 12,
+      this.y + 14,
+      this.facing * BULLET_SPEED
+    ));
+  }
+
+  takeDamage(amount) {
+    if (this.invincible > 0) return;
+    playerHP -= amount;
+    this.invincible = 60;
+    screenShake = 10;
+    if (playerHP <= 0) {
+      playerHP = 0;
+      gameState = 'gameover';
+    }
+  }
+
+  draw(ctx, camX, camY) {
+    const px = this.x - camX;
+    const py = this.y - camY;
+
+    // Flicker when invincible
+    if (this.invincible > 0 && Math.floor(this.invincible / 4) % 2) return;
+
+    ctx.save();
+    ctx.translate(px + this.w / 2, py + this.h / 2);
+    ctx.scale(this.facing, 1);
+    ctx.translate(-this.w / 2, -this.h / 2);
+
+    // Cape (flowing behind)
+    ctx.fillStyle = '#1a0a2e';
+    ctx.beginPath();
+    const capeWave = Math.sin(this.capePhase) * 3;
+    ctx.moveTo(4, 8);
+    ctx.lineTo(-8 + capeWave, 30);
+    ctx.lineTo(8, 28);
+    ctx.lineTo(12, 8);
+    ctx.fill();
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Body (dark hooded robe)
+    ctx.fillStyle = '#0d0d2b';
+    ctx.fillRect(6, 10, 12, 20);
+    ctx.strokeStyle = '#00ffcc';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(6, 10, 12, 20);
+
+    // Hood
+    ctx.fillStyle = '#1a1a3e';
+    ctx.beginPath();
+    ctx.arc(12, 10, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#00ffcc';
+    ctx.stroke();
+
+    // Glowing eyes
+    const eyeGlow = Math.sin(frameCount * 0.15) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(0, 255, 204, ${eyeGlow})`;
+    ctx.fillRect(9, 8, 2, 2);
+    ctx.fillRect(14, 8, 2, 2);
+
+    // Eye glow effect
+    ctx.shadowColor = '#00ffcc';
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = '#00ffcc';
+    ctx.fillRect(9, 8, 2, 2);
+    ctx.fillRect(14, 8, 2, 2);
+    ctx.shadowBlur = 0;
+
+    // Legs (walking animation)
+    const legOffset = this.vx !== 0 ? Math.sin(this.animFrame * Math.PI / 2) * 3 : 0;
+    ctx.fillStyle = '#0d0d2b';
+    ctx.fillRect(7, 30, 4, 6 + legOffset);
+    ctx.fillRect(13, 30, 4, 6 - legOffset);
+
+    // Terminal symbol on chest
+    ctx.fillStyle = '#ff6b9d';
+    ctx.font = '6px monospace';
+    ctx.fillText('>', 10, 24);
+
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// BULLET CLASS (Prompt Bolts)
+// ============================================================
+class Bullet {
+  constructor(x, y, vx) {
+    this.x = x;
+    this.y = y;
+    this.w = 10;
+    this.h = 4;
+    this.vx = vx;
+    this.life = 60;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.life--;
+  }
+
+  draw(ctx, camX, camY) {
+    const px = this.x - camX;
+    const py = this.y - camY;
+    ctx.save();
+    ctx.shadowColor = '#00ffcc';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#00ffcc';
+    ctx.fillRect(px, py, this.w, this.h);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '6px monospace';
+    ctx.fillText('>', px, py + 4);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// ENEMY CLASSES
+// ============================================================
+class CorruptedShellfish {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.w = 28; this.h = 22;
+    this.vx = -ENEMY_SPEED; this.vy = 0;
+    this.hp = 2;
+    this.animFrame = 0;
+    this.type = 'shellfish';
+  }
+  update() {
+    this.vy += GRAVITY * 0.5;
+    this.x += this.vx;
+    this.y += this.vy;
+    for (let p of platforms) {
+      if (rectsCollide(this, p)) {
+        if (this.vy > 0) { this.y = p.y - this.h; this.vy = 0; }
+        else { this.vx *= -1; }
+      }
+    }
+    if (this.y > 600) { this.y = 0; this.vy = 0; }
+    this.animFrame = (this.animFrame + 0.1) % 2;
+  }
+  draw(ctx, camX, camY) {
+    const px = this.x - camX;
+    const py = this.y - camY;
+    // Shell body
+    ctx.fillStyle = '#8b4513';
+    ctx.beginPath();
+    ctx.ellipse(px + 14, py + 14, 14, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Corruption glitch lines
+    ctx.strokeStyle = '#ff0066';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) {
+      const gy = py + 6 + i * 6 + Math.sin(frameCount * 0.2 + i) * 2;
+      ctx.beginPath();
+      ctx.moveTo(px + 4, gy);
+      ctx.lineTo(px + 24, gy + rand(-2, 2));
+      ctx.stroke();
+    }
+    // Eye
+    ctx.fillStyle = '#ff3366';
+    ctx.fillRect(px + 18, py + 8, 4, 4);
+  }
+}
+
+class RogueTerminal {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.w = 30; this.h = 26;
+    this.vx = -ENEMY_SPEED * 0.8; this.vy = 0;
+    this.hp = 3;
+    this.type = 'terminal';
+    this.glitchTimer = 0;
+  }
+  update() {
+    this.vy += GRAVITY * 0.4;
+    this.x += this.vx;
+    this.y += this.vy;
+    for (let p of platforms) {
+      if (rectsCollide(this, p)) {
+        if (this.vy > 0) { this.y = p.y - this.h; this.vy = 0; }
+        else { this.vx *= -1; }
+      }
+    }
+    if (this.y > 600) { this.y = 0; this.vy = 0; }
+    this.glitchTimer++;
+  }
+  draw(ctx, camX, camY) {
+    const px = this.x - camX;
+    const py = this.y - camY;
+    // Monitor body
+    ctx.fillStyle = '#2d2d2d';
+    ctx.fillRect(px, py, 30, 22);
+    ctx.strokeStyle = '#ff6600';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, py, 30, 22);
+    // Screen
+    ctx.fillStyle = '#001a00';
+    ctx.fillRect(px + 3, py + 3, 24, 16);
+    // Glitch text
+    const glitchChars = '!@#$%^&*()';
+    ctx.fillStyle = '#00ff00';
+    ctx.font = '8px monospace';
+    if (this.glitchTimer % 10 < 7) {
+      ctx.fillText('ERR', px + 6, py + 14);
+    } else {
+      ctx.fillText(glitchChars[randInt(0, glitchChars.length)], px + 8, py + 14);
+    }
+    // Stand
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(px + 11, py + 22, 8, 4);
+    // Angry eyes
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(px + 8, py + 7, 3, 2);
+    ctx.fillRect(px + 18, py + 7, 3, 2);
+  }
+}
+
+class ErrorBubble {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.w = 20; this.h = 20;
+    this.baseY = y;
+    this.floatPhase = rand(0, Math.PI * 2);
+    this.vx = -ENEMY_SPEED * 0.5;
+    this.hp = 1;
+    this.type = 'bubble';
+  }
+  update() {
+    this.x += this.vx;
+    this.y = this.baseY + Math.sin(frameCount * 0.05 + this.floatPhase) * 30;
+    if (this.x < -50) this.x = camera.x + canvas.width + 50;
+  }
+  draw(ctx, camX, camY) {
+    const px = this.x - camX;
+    const py = this.y - camY;
+    // Bubble
+    ctx.strokeStyle = '#ff4488';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px + 10, py + 10, 10, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 68, 136, 0.2)';
+    ctx.fill();
+    // Error text
+    ctx.fillStyle = '#ff4488';
+    ctx.font = '7px monospace';
+    ctx.fillText('ERR', px + 3, py + 13);
+  }
+}
+
+// ============================================================
+// TOKEN (Collectible)
+// ============================================================
+class Token {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.w = 14; this.h = 14;
+    this.baseY = y;
+    this.collected = false;
+    this.phase = rand(0, Math.PI * 2);
+  }
+  update() {
+    this.y = this.baseY + Math.sin(frameCount * 0.06 + this.phase) * 5;
+    if (!this.collected && player && rectsCollide(this, player)) {
+      this.collected = true;
+      score += 100;
+      particles.push(new ParticleExplosion(this.x + 7, this.y + 7, '#ffdd00'));
+    }
+  }
+  draw(ctx, camX, camY) {
+    if (this.collected) return;
+    const px = this.x - camX;
+    const py = this.y - camY;
+    ctx.save();
+    ctx.shadowColor = '#ffdd00';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#ffdd00';
+    ctx.beginPath();
+    ctx.arc(px + 7, py + 7, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ff8800';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText('$', px + 3, py + 11);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// PARTICLES
+// ============================================================
+class ParticleExplosion {
+  constructor(x, y, color) {
+    this.particles = [];
+    for (let i = 0; i < 8; i++) {
+      this.particles.push({
+        x, y,
+        vx: rand(-3, 3),
+        vy: rand(-4, 0),
+        life: 30,
+        color
+      });
+    }
+  }
+  update() {
+    for (let p of this.particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.2;
+      p.life--;
+    }
+    this.particles = this.particles.filter(p => p.life > 0);
+  }
+  draw(ctx, camX, camY) {
+    for (let p of this.particles) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life / 30;
+      ctx.fillRect(p.x - camX, p.y - camY, 3, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ============================================================
+// BOSS: DISFIGURED CYBER-LOBSTER
+// ============================================================
+class CyberLobster {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.w = 120; this.h = 90;
+    this.hp = BOSS_HP;
+    this.maxHp = BOSS_HP;
+    this.phase = 0;
+    this.attackTimer = 0;
+    this.vx = 0;
+    this.vy = 0;
+    this.glitchOffset = 0;
+    this.clawAngle = 0;
+    this.active = false;
+  }
+
+  update() {
+    if (!this.active) return;
+
+    this.attackTimer++;
+    this.glitchOffset = Math.sin(frameCount * 0.3) * 3;
+    this.clawAngle = Math.sin(frameCount * 0.05) * 0.2;
+
+    // Movement: hover and lunge
+    const targetX = player.x - 200 + Math.sin(frameCount * 0.02) * 100;
+    this.vx = lerp(this.vx, (targetX - this.x) * 0.01, 0.02);
+    this.vy = Math.sin(frameCount * 0.03) * 2;
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Keep in bounds
+    this.x = Math.max(WORLD_LENGTH - 500, Math.min(WORLD_LENGTH - 200, this.x));
+    this.y = Math.max(100, Math.min(350, this.y));
+
+    // Attack: spawn glitch bubbles
+    if (this.attackTimer % 60 === 0) {
+      for (let i = 0; i < 3; i++) {
+        enemies.push(new ErrorBubble(this.x + rand(20, 100), this.y + 60));
+      }
+    }
+    if (this.attackTimer % 90 === 0) {
+      // Big attack
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+          if (this.active) {
+            enemies.push(new ErrorBubble(this.x + rand(0, 120), this.y + 80));
+          }
+        }, i * 200);
+      }
+    }
+
+    // Check collision with player bullets
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      if (rectsCollide(bullets[i], this)) {
+        this.hp--;
+        bullets.splice(i, 1);
+        screenShake = 5;
+        particles.push(new ParticleExplosion(this.x + 60, this.y + 40, '#ff6600'));
+        if (this.hp <= 0) {
+          this.active = false;
+          gameState = 'win';
+          // Big explosion
+          for (let j = 0; j < 20; j++) {
+            particles.push(new ParticleExplosion(this.x + rand(0, 120), this.y + rand(0, 90), '#ff4400'));
+          }
+        }
+      }
+    }
+
+    // Touch damage to player
+    if (rectsCollide(this, player) && player.invincible <= 0) {
+      player.takeDamage(2);
+    }
+  }
+
+  draw(ctx, camX, camY) {
+    const px = this.x - camX + this.glitchOffset;
+    const py = this.y - camY;
+
+    ctx.save();
+
+    // Glitch layer offset
+    if (frameCount % 8 < 2) {
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = '#ff0066';
+      ctx.fillRect(px + 5, py, this.w, this.h);
+      ctx.globalAlpha = 1;
+    }
+
+    // Lobster body (armored shell)
+    ctx.fillStyle = '#4a0020';
+    ctx.beginPath();
+    ctx.ellipse(px + 60, py + 50, 55, 35, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Shell armor plates
+    ctx.strokeStyle = '#ff2266';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.arc(px + 40 + i * 15, py + 45, 12, Math.PI, 0);
+      ctx.stroke();
+    }
+
+    // Glitch lines across body
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 5; i++) {
+      const ly = py + 25 + i * 12 + Math.sin(frameCount * 0.3 + i) * 3;
+      ctx.beginPath();
+      ctx.moveTo(px + 20, ly);
+      ctx.lineTo(px + 100 + rand(-5, 5), ly + rand(-3, 3));
+      ctx.stroke();
+    }
+
+    // Left claw (bigger)
+    ctx.save();
+    ctx.translate(px + 10, py + 40);
+    ctx.rotate(-0.3 + this.clawAngle);
+    ctx.fillStyle = '#880033';
+    ctx.fillRect(-10, -8, 30, 16);
+    ctx.fillStyle = '#ff4488';
+    ctx.fillRect(15, -12, 12, 8);
+    ctx.fillRect(15, 4, 12, 8);
+    ctx.restore();
+
+    // Right claw (smaller, mismatched)
+    ctx.save();
+    ctx.translate(px + 110, py + 45);
+    ctx.rotate(0.4 - this.clawAngle * 0.7);
+    ctx.fillStyle = '#660044';
+    ctx.fillRect(-5, -6, 22, 12);
+    ctx.fillStyle = '#cc2266';
+    ctx.fillRect(12, -10, 10, 6);
+    ctx.fillRect(12, 4, 10, 6);
+    ctx.restore();
+
+    // Eyes (glowing, mismatched)
+    const eyeFlicker = Math.sin(frameCount * 0.2) * 0.2 + 0.8;
+    // Left eye (big)
+    ctx.fillStyle = `rgba(0, 255, 100, ${eyeFlicker})`;
+    ctx.beginPath();
+    ctx.arc(px + 40, py + 25, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(px + 37, py + 22, 4, 6);
+    // Right eye (small, glitchy)
+    ctx.fillStyle = `rgba(255, 0, 50, ${eyeFlicker})`;
+    ctx.beginPath();
+    ctx.arc(px + 75, py + 22, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(px + 73, py + 20, 3, 4);
+
+    // Eye glow
+    ctx.shadowColor = '#00ff66';
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = '#00ff66';
+    ctx.beginPath();
+    ctx.arc(px + 40, py + 25, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Antennae
+    ctx.strokeStyle = '#ff6600';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px + 50, py + 18);
+    ctx.quadraticCurveTo(px + 35, py - 10, px + 20, py - 5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(px + 65, py + 18);
+    ctx.quadraticCurveTo(px + 80, py - 15, px + 95, py - 8);
+    ctx.stroke();
+
+    // Legs
+    ctx.strokeStyle = '#660033';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 4; i++) {
+      const lx = px + 30 + i * 20;
+      const legAnim = Math.sin(frameCount * 0.1 + i) * 3;
+      ctx.beginPath();
+      ctx.moveTo(lx, py + 75);
+      ctx.lineTo(lx - 5 + legAnim, py + 90);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(lx + 5, py + 75);
+      ctx.lineTo(lx + 10 - legAnim, py + 90);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// LEVEL GENERATION
+// ============================================================
+function generateLevel() {
+  platforms = [];
+  enemies = [];
+  tokens = [];
+  checkpoints = [];
+  particles = [];
+  bullets = [];
+  boss = null;
+  bossTriggered = false;
+
+  // Ground platforms with gaps
+  let gx = 0;
+  while (gx < WORLD_LENGTH) {
+    const pw = randInt(120, 300);
+    const ph = 200 + Math.sin(gx * 0.005) * 80;
+    platforms.push({ x: gx, y: 480 + (200 - ph), w: pw, h: 1000 });
+    gx += pw + randInt(40, 100);
+  }
+
+  // Floating platforms
+  for (let i = 0; i < 60; i++) {
+    const px = rand(200, WORLD_LENGTH - 200);
+    const py = rand(150, 380);
+    const pw = rand(60, 150);
+    platforms.push({ x: px, y: py, w: pw, h: 14 });
+  }
+
+  // Enemies
+  for (let i = 0; i < 25; i++) {
+    const ex = rand(400, WORLD_LENGTH - 400);
+    const ey = rand(100, 350);
+    const type = randInt(0, 3);
+    if (type === 0) enemies.push(new CorruptedShellfish(ex, ey));
+    else if (type === 1) enemies.push(new RogueTerminal(ex, ey));
+    else enemies.push(new ErrorBubble(ex, ey));
+  }
+
+  // Tokens
+  for (let i = 0; i < 80; i++) {
+    const tx = rand(100, WORLD_LENGTH - 100);
+    const ty = rand(100, 420);
+    tokens.push(new Token(tx, ty));
+  }
+
+  // Checkpoints
+  for (let i = 1; i <= 3; i++) {
+    checkpoints.push({ x: i * (WORLD_LENGTH / 4), y: 380, activated: false });
+  }
+
+  // Boss
+  boss = new CyberLobster(WORLD_LENGTH - 300, 250);
+}
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+function initGame() {
+  player = new Player(80, 350);
+  score = 0;
+  playerHP = 10;
+  progress = 0;
+  checkpointActivated = 0;
+  frameCount = 0;
+  screenShake = 0;
+  glitchTimer = 0;
+  generateLevel();
+}
+
+function startGame() {
+  gameState = 'playing';
+  initGame();
+}
+
+function restartGame() {
+  gameState = 'playing';
+  initGame();
+}
+
+// ============================================================
+// UPDATE LOOP
+// ============================================================
+function update() {
+  if (gameState !== 'playing') return;
+
+  frameCount++;
+
+  // Update player
+  player.update();
+
+  // Camera follows player smoothly
+  const targetCamX = player.x - canvas.width / 3;
+  camera.x = lerp(camera.x, Math.max(0, targetCamX), 0.08);
+
+  // Update bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    bullets[i].update();
+    if (bullets[i].life <= 0 || bullets[i].x < camera.x - 50 || bullets[i].x > camera.x + canvas.width + 50) {
+      bullets.splice(i, 1);
+    }
+  }
+
+  // Update enemies
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    enemies[i].update();
+    // Remove off-screen enemies
+    if (enemies[i].x < camera.x - 200) {
+      enemies.splice(i, 1);
+      continue;
+    }
+    // Check bullet collision
+    for (let j = bullets.length - 1; j >= 0; j--) {
+      if (rectsCollide(enemies[i], bullets[j])) {
+        enemies[i].hp--;
+        bullets.splice(j, 1);
+        if (enemies[i].hp <= 0) {
+          particles.push(new ParticleExplosion(enemies[i].x, enemies[i].y, '#ff6600'));
+          enemies.splice(i, 1);
+          score += 50;
+          break;
+        }
+      }
+    }
+    // Check player collision
+    if (i < enemies.length && rectsCollide(enemies[i], player) && player.invincible <= 0) {
+      player.takeDamage(1);
+    }
+  }
+
+  // Update tokens
+  for (let t of tokens) t.update();
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update();
+    if (particles[i].particles && particles[i].particles.length === 0) {
+      particles.splice(i, 1);
+    }
+  }
+
+  // Checkpoint activation
+  for (let cp of checkpoints) {
+    if (!cp.activated && player.x > cp.x) {
+      cp.activated = true;
+      checkpointActivated++;
+      playerHP = Math.min(10, playerHP + 3);
+      particles.push(new ParticleExplosion(cp.x, cp.y, '#00ffcc'));
+    }
+  }
+
+  // Progress
+  progress = Math.min(100, (player.x / WORLD_LENGTH) * 100);
+
+  // Boss trigger
+  if (player.x > WORLD_LENGTH - 500 && !bossTriggered) {
+    bossTriggered = true;
+    boss.active = true;
+  }
+
+  // Update boss
+  if (boss) boss.update();
+
+  // Screen shake decay
+  if (screenShake > 0) screenShake--;
+}
+
+// ============================================================
+// DRAW FUNCTIONS
+// ============================================================
+function draw() {
+  ctx.save();
+
+  // Screen shake
+  if (screenShake > 0) {
+    ctx.translate(rand(-screenShake, screenShake) * 0.5, rand(-screenShake, screenShake) * 0.5);
+  }
+
+  // Clear
+  ctx.fillStyle = '#0a0a2a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (gameState === 'start') {
+    drawStartScreen();
+  } else if (gameState === 'playing') {
+    drawGame();
+  } else if (gameState === 'win') {
+    drawWinScreen();
+  } else if (gameState === 'gameover') {
+    drawGameOverScreen();
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// PARALLAX BACKGROUND
+// ============================================================
+function drawBackground(camX) {
+  // Sky gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#0a0020');
+  grad.addColorStop(0.5, '#1a0040');
+  grad.addColorStop(1, '#001030');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Stars (far layer)
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 50; i++) {
+    const sx = ((i * 137 + 50) % canvas.width);
+    const sy = ((i * 97 + 30) % (canvas.height * 0.5));
+    const twinkle = Math.sin(frameCount * 0.05 + i) * 0.5 + 0.5;
+    ctx.globalAlpha = twinkle * 0.8;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // Server racks (mid-far layer)
+  ctx.fillStyle = '#0a0a1a';
+  for (let i = 0; i < 15; i++) {
+    const rx = i * 160 - (camX * 0.1) % 160;
+    ctx.fillRect(rx, canvas.height * 0.4, 80, canvas.height * 0.3);
+    // Blinking lights
+    for (let j = 0; j < 6; j++) {
+      const lightColor = (frameCount + j * 20) % 40 < 20 ? '#00ff00' : '#ff0000';
+      ctx.fillStyle = lightColor;
+      ctx.fillRect(rx + 10 + (j % 2) * 40, canvas.height * 0.42 + Math.floor(j / 2) * 20, 8, 4);
+    }
+  }
+
+  // Beach / waves (mid layer)
+  ctx.fillStyle = '#003355';
+  const waveOffset = (camX * 0.2) % 100;
+  for (let i = -1; i < canvas.width / 50 + 2; i++) {
+    const wx = i * 50 - waveOffset;
+    const wy = canvas.height * 0.65 + Math.sin(frameCount * 0.03 + i * 0.5) * 8;
+    ctx.fillStyle = '#004477';
+    ctx.fillRect(wx, wy, 50, 20);
+    ctx.fillStyle = '#006699';
+    ctx.fillRect(wx, wy, 50, 4);
+  }
+
+  // Palm trees / digital structures (near layer)
+  for (let i = 0; i < 10; i++) {
+    const tx = i * 300 - (camX * 0.4) % 300;
+    // Trunk
+    ctx.fillStyle = '#4a2800';
+    ctx.fillRect(tx + 140, canvas.height * 0.45, 10, canvas.height * 0.25);
+    // Digital leaves
+    ctx.fillStyle = '#00ff88';
+    ctx.globalAlpha = 0.7;
+    for (let l = 0; l < 5; l++) {
+      const lx = tx + 145 + Math.cos(l * 1.2 + frameCount * 0.02) * 25;
+      const ly = canvas.height * 0.42 + Math.sin(l * 0.8) * 10;
+      ctx.fillRect(lx, ly, 20, 6);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Scan lines effect
+  ctx.fillStyle = 'rgba(0, 255, 204, 0.02)';
+  for (let i = 0; i < canvas.height; i += 3) {
+    ctx.fillRect(0, i, canvas.width, 1);
+  }
+}
+
+// ============================================================
+// PLATFORM DRAWING
+// ============================================================
+function drawPlatforms(camX) {
+  for (let p of platforms) {
+    if (p.x + p.w < camX - 50 || p.x > camX + canvas.width + 50) continue;
+    const px = p.x - camX;
+    if (p.h > 100) {
+      // Ground
+      ctx.fillStyle = '#2a1a00';
+      ctx.fillRect(px, p.y, p.w, p.h);
+      // Top sand
+      ctx.fillStyle = '#8b6914';
+      ctx.fillRect(px, p.y, p.w, 8);
+      // Digital artifacts
+      ctx.fillStyle = '#00ff4422';
+      for (let i = 0; i < p.w; i += 20) {
+        if ((frameCount + i) % 60 < 30) {
+          ctx.fillRect(px + i, p.y + 12, 8, 3);
+        }
+      }
+    } else {
+      // Floating platform
+      ctx.fillStyle = '#1a1a3e';
+      ctx.fillRect(px, p.y, p.w, p.h);
+      ctx.strokeStyle = '#00ffcc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px, p.y, p.w, p.h);
+      // Tech details
+      ctx.fillStyle = '#ff6b9d';
+      ctx.font = '8px monospace';
+      ctx.fillText('///', px + 5, p.y + 10);
+    }
+  }
+}
+
+// ============================================================
+// HUD DRAWING
+// ============================================================
+function drawHUD() {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Top bar background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, w, 40);
+  ctx.strokeStyle = '#00ffcc';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0, 0, w, 40);
+
+  // Health bar
+  ctx.fillStyle = '#333';
+  ctx.fillRect(10, 10, 120, 16);
+  ctx.fillStyle = playerHP > 3 ? '#00ff88' : '#ff3333';
+  ctx.fillRect(10, 10, (playerHP / 10) * 120, 16);
+  ctx.strokeStyle = '#fff';
+  ctx.strokeRect(10, 10, 120, 16);
+  ctx.fillStyle = '#fff';
+  ctx.font = '10px monospace';
+  ctx.fillText('HP', 14, 22);
+
+  // Score
+  ctx.fillStyle = '#ffdd00';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(`SCORE: ${score}`, 150, 22);
+
+  // Tokens
+  const tokenCount = tokens.filter(t => t.collected).length;
+  ctx.fillStyle = '#ff8800';
+  ctx.fillText(`TOKENS: ${tokenCount}`, 320, 22);
+
+  // Progress bar
+  ctx.fillStyle = '#333';
+  ctx.fillRect(w - 170, 10, 160, 16);
+  ctx.fillStyle = '#00ccff';
+  ctx.fillRect(w - 170, 10, (progress / 100) * 160, 16);
+  ctx.strokeStyle = '#00ccff';
+  ctx.strokeRect(w - 170, 10, 160, 16);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(`${Math.floor(progress)}%`, w - 160, 22);
+
+  // Boss health bar (when boss active)
+  if (boss && bossTriggered && boss.active) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(w / 2 - 150, h - 50, 300, 30);
+    ctx.strokeStyle = '#ff0066';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(w / 2 - 150, h - 50, 300, 30);
+    ctx.fillStyle = '#660011';
+    ctx.fillRect(w / 2 - 145, h - 45, 290, 20);
+    ctx.fillStyle = '#ff0066';
+    ctx.fillRect(w / 2 - 145, h - 45, (boss.hp / boss.maxHp) * 290, 20);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('CYBER-LOBSTER', w / 2, h - 30);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ============================================================
+// CHECKPOINT DRAWING
+// ============================================================
+function drawCheckpoints(camX) {
+  for (let cp of checkpoints) {
+    if (cp.x < camX - 50 || cp.x > camX + canvas.width + 50) continue;
+    const px = cp.x - camX;
+    ctx.fillStyle = cp.activated ? '#00ffcc' : '#444';
+    ctx.fillRect(px, cp.y, 6, 40);
+    // Flag
+    ctx.fillStyle = cp.activated ? '#00ffcc' : '#ff6600';
+    ctx.fillRect(px + 6, cp.y - 5, 16, 12);
+    if (cp.activated) {
+      ctx.fillStyle = '#000';
+      ctx.font = '8px monospace';
+      ctx.fillText('✓', px + 9, cp.y + 5);
+    }
+  }
+}
+
+// ============================================================
+// SCREENS
+// ============================================================
+function drawStartScreen() {
+  // Animated background
+  ctx.fillStyle = '#0a0a2a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Stars
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 80; i++) {
+    const sx = (i * 137 + frameCount * 0.5) % canvas.width;
+    const sy = (i * 97 + 30) % canvas.height;
+    ctx.globalAlpha = Math.sin(frameCount * 0.05 + i) * 0.3 + 0.5;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // Title
+  ctx.fillStyle = '#00ffcc';
+  ctx.font = `bold ${Math.floor(canvas.width / 12)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur = 20;
+  ctx.fillText('HERMES AGENT', canvas.width / 2, canvas.height * 0.25);
+  ctx.shadowBlur = 0;
+
+  // Subtitle
+  ctx.fillStyle = '#ff6b9d';
+  ctx.font = `${Math.floor(canvas.width / 24)}px monospace`;
+  ctx.fillText('CYBER SHORELINE', canvas.width / 2, canvas.height * 0.33);
+
+  // Character preview (animated)
+  const previewX = canvas.width / 2 - 12;
+  const previewY = canvas.height * 0.45 + Math.sin(frameCount * 0.05) * 10;
+  ctx.fillStyle = '#0d0d2b';
+  ctx.fillRect(previewX + 6, previewY + 10, 12, 20);
+  ctx.strokeStyle = '#00ffcc';
+  ctx.strokeRect(previewX + 6, previewY + 10, 12, 20);
+  ctx.fillStyle = '#1a1a3e';
+  ctx.beginPath();
+  ctx.arc(previewX + 12, previewY + 10, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = `rgba(0, 255, 204, ${Math.sin(frameCount * 0.1) * 0.3 + 0.7})`;
+  ctx.fillRect(previewX + 9, previewY + 8, 2, 2);
+  ctx.fillRect(previewX + 14, previewY + 8, 2, 2);
+
+  // Instructions
+  ctx.fillStyle = '#aaa';
+  ctx.font = `${Math.floor(canvas.width / 40)}px monospace`;
+  ctx.fillText('WASD/Arrows: Move  |  Space: Jump', canvas.width / 2, canvas.height * 0.62);
+  ctx.fillText('J/Click: Shoot Prompt Bolts', canvas.width / 2, canvas.height * 0.68);
+  ctx.fillText('R: Restart', canvas.width / 2, canvas.height * 0.74);
+
+  // Start prompt
+  ctx.fillStyle = frameCount % 40 < 20 ? '#ffdd00' : '#ff8800';
+  ctx.font = `bold ${Math.floor(canvas.width / 20)}px monospace`;
+  ctx.fillText('CLICK OR PRESS SPACE TO START', canvas.width / 2, canvas.height * 0.85);
+  ctx.textAlign = 'left';
+}
+
+function drawWinScreen() {
+  ctx.fillStyle = '#0a1a0a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Particles celebration
+  for (let i = 0; i < 30; i++) {
+    const px = (i * 47 + frameCount * 2) % canvas.width;
+    const py = (i * 31 + frameCount * 1.5) % canvas.height;
+    ctx.fillStyle = ['#ffdd00', '#00ffcc', '#ff6b9d', '#00ccff'][i % 4];
+    ctx.globalAlpha = Math.sin(frameCount * 0.1 + i) * 0.3 + 0.5;
+    ctx.fillRect(px, py, 4, 4);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = '#00ff88';
+  ctx.font = `bold ${Math.floor(canvas.width / 10)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#00ff88';
+  ctx.shadowBlur = 20;
+  ctx.fillText('VICTORY!', canvas.width / 2, canvas.height * 0.3);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#00ffcc';
+  ctx.font = `${Math.floor(canvas.width / 25)}px monospace`;
+  ctx.fillText('The Cyber-LOBSTER has been defeated!', canvas.width / 2, canvas.height * 0.42);
+
+  ctx.fillStyle = '#ffdd00';
+  ctx.font = `bold ${Math.floor(canvas.width / 18)}px monospace`;
+  ctx.fillText(`FINAL SCORE: ${score}`, canvas.width / 2, canvas.height * 0.55);
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = `${Math.floor(canvas.width / 30)}px monospace`;
+  ctx.fillText('The digital shoreline is safe... for now.', canvas.width / 2, canvas.height * 0.65);
+
+  ctx.fillStyle = frameCount % 40 < 20 ? '#ffdd00' : '#ff8800';
+  ctx.font = `bold ${Math.floor(canvas.width / 22)}px monospace`;
+  ctx.fillText('PRESS R TO PLAY AGAIN', canvas.width / 2, canvas.height * 0.8);
+  ctx.textAlign = 'left';
+}
+
+function drawGameOverScreen() {
+  ctx.fillStyle = '#1a0a0a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Glitch effect
+  if (frameCount % 6 < 3) {
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.05)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.fillStyle = '#ff3333';
+  ctx.font = `bold ${Math.floor(canvas.width / 10)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#ff0000';
+  ctx.shadowBlur = 15;
+  ctx.fillText('GAME OVER', canvas.width / 2, canvas.height * 0.3);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#ff6b9d';
+  ctx.font = `${Math.floor(canvas.width / 25)}px monospace`;
+  ctx.fillText('The shoreline claims another agent...', canvas.width / 2, canvas.height * 0.42);
+
+  ctx.fillStyle = '#ffdd00';
+  ctx.font = `bold ${Math.floor(canvas.width / 18)}px monospace`;
+  ctx.fillText(`SCORE: ${score}`, canvas.width / 2, canvas.height * 0.55);
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = `${Math.floor(canvas.width / 35)}px monospace`;
+  ctx.fillText(`Progress: ${Math.floor(progress)}%  |  Checkpoints: ${checkpointActivated}`, canvas.width / 2, canvas.height * 0.65);
+
+  ctx.fillStyle = frameCount % 40 < 20 ? '#ffdd00' : '#ff8800';
+  ctx.font = `bold ${Math.floor(canvas.width / 22)}px monospace`;
+  ctx.fillText('PRESS R TO RETRY', canvas.width / 2, canvas.height * 0.8);
+  ctx.textAlign = 'left';
+}
+
+// ============================================================
+// MAIN GAME DRAW
+// ============================================================
+function drawGame() {
+  drawBackground(camera.x);
+  drawPlatforms(camera.x);
+  drawCheckpoints(camera.x);
+
+  // Draw tokens
+  for (let t of tokens) t.draw(ctx, camera.x, camera.y);
+
+  // Draw enemies
+  for (let e of enemies) {
+    if (e.x > camera.x - 100 && e.x < camera.x + canvas.width + 100) {
+      e.draw(ctx, camera.x, camera.y);
+    }
+  }
+
+  // Draw bullets
+  for (let b of bullets) b.draw(ctx, camera.x, camera.y);
+
+  // Draw boss
+  if (boss && bossTriggered) boss.draw(ctx, camera.x, camera.y);
+
+  // Draw player
+  player.draw(ctx, camera.x, camera.y);
+
+  // Draw particles
+  for (let p of particles) p.draw(ctx, camera.x, camera.y);
+
+  // HUD
+  drawHUD();
+
+  // Boss warning flash
+  if (bossTriggered && boss && boss.active && frameCount % 120 < 10) {
+    ctx.fillStyle = 'rgba(255, 0, 50, 0.15)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ff0066';
+    ctx.font = `bold ${Math.floor(canvas.width / 20)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('WARNING: BOSS DETECTED', canvas.width / 2, canvas.height * 0.15);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// Start the loop
+gameLoop();
+</script>
+</body>
+</html>
