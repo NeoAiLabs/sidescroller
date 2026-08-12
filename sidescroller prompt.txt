@@ -1,4 +1,4 @@
-Create a complete single-file HTML5 side-scroller game using only HTML, CSS, and vanilla JavaScript.
+Create a complete single-file HTML5 side-scroller game using only HTML, CSS, and vanilla JavaScript. Call the file by the model name we are using
 
 Game concept:
 A small Hermes Agent character must travel through a chaotic digital shoreline to reach the final boss: a disfigured cyber-lobster.

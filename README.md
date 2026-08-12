@@ -13,6 +13,7 @@ Each model receives the prompt in [`sidescroller prompt.txt`](./sidescroller%20p
 | Deepseekv4-Flash | [`Deepseekv4-Flash.html`](./Deepseekv4-Flash.html) |
 | Deepseekv4-Flash (new) | [`DSV4-new.html`](./DSV4-new.html) |
 | Grok-4.5 | [`Grok-4.5.html`](./Grok-4.5.html) |
+| Grok-4.6 | [`Grok-4.6.html`](./Grok-4.6.html) |
 | North-Mini | [`North-Mini.html`](./North-Mini.html) |
 
 ## Run a game
