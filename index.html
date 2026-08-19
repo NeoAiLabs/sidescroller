@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEON RAIN // a tiny cyberpunk</title>
+<style>
+  :root{
+    --bg:#05060a;
+    --panel:#0a0d14;
+    --ink:#c8d3e0;
+    --dim:#5a6678;
+    --neon-cyan:#37e6ff;
+    --neon-pink:#ff4fd8;
+    --neon-green:#5dff9c;
+    --neon-amber:#ffc24b;
+    --neon-red:#ff5470;
+    --neon-purple:#b07bff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Cascadia Mono","JetBrains Mono","Fira Mono",Consolas,"DejaVu Sans Mono",monospace;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  #wrap{
+    position:relative; padding:10px 12px 12px;
+    background:linear-gradient(180deg,#070910,#04050a);
+    border:1px solid #1a2233; border-radius:10px;
+    box-shadow:0 0 0 1px #000, 0 18px 60px #000c, 0 0 42px #0b1a2a inset;
+  }
+  #top{
+    display:flex; align-items:baseline; gap:14px;
+    padding:2px 4px 8px; font-size:12px; letter-spacing:.5px;
+  }
+  #top .title{
+    font-size:15px; font-weight:700; letter-spacing:3px;
+    color:var(--neon-cyan); text-shadow:0 0 8px #37e6ff88, 0 0 2px #37e6ff;
+  }
+  #top .title b{color:var(--neon-pink); text-shadow:0 0 8px #ff4fd888}
+  #district{color:var(--neon-amber); text-shadow:0 0 6px #ffc24b55}
+  #objective{color:var(--dim); margin-left:auto; text-align:right; max-width:52%}
+  #objective .k{color:var(--neon-green)}
+  #stage{position:relative; line-height:0}
+  canvas{
+    display:block; background:#04050a; border-radius:4px;
+    box-shadow:0 0 0 1px #101827, 0 0 24px #0a1420 inset;
+  }
+  /* CRT overlays */
+  #crt{
+    position:absolute; inset:10px 12px 12px; pointer-events:none; border-radius:4px;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px),
+      radial-gradient(120% 90% at 50% 40%, rgba(0,0,0,0) 55%, rgba(0,0,0,.55) 100%);
+    mix-blend-mode:multiply;
+  }
+  #flick{position:absolute; inset:10px 12px 12px; pointer-events:none; border-radius:4px;
+    background:#8fd8ff; opacity:.015; mix-blend-mode:screen;}
+  #bottom{
+    display:flex; gap:10px; align-items:stretch;
+    padding:8px 4px 0; font-size:12px;
+  }
+  .panel{
+    background:var(--panel); border:1px solid #16202f; border-radius:6px;
+    padding:7px 10px; min-height:52px;
+  }
+  #stats{flex:0 0 210px}
+  #log{flex:1 1 auto; display:flex; flex-direction:column; gap:2px; overflow:hidden}
+  #prompt{flex:0 0 250px; display:flex; align-items:center; color:var(--neon-cyan);
+    text-shadow:0 0 6px #37e6ff55; min-height:52px}
+  .lbl{color:var(--dim); font-size:10px; letter-spacing:2px; margin-bottom:3px}
+  #credits{color:var(--neon-amber); font-size:15px; text-shadow:0 0 6px #ffc24b55}
+  #items{color:var(--dim); margin-top:3px; font-size:11px}
+  #items .it{color:var(--neon-green)}
+  .logline{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#93a1b5}
+  .logline.sys{color:var(--neon-cyan)}
+  .logline.good{color:var(--neon-green)}
+  .logline.bad{color:var(--neon-red)}
+  .logline.dim{color:#4a5568}
+  /* dialogue */
+  #dialog{
+    position:absolute; left:12px; right:12px; bottom:12px; display:none;
+    background:#070a12ee; border:1px solid #22304a; border-radius:8px;
+    padding:12px 14px 10px; box-shadow:0 8px 30px #000c, 0 0 18px #10203a inset;
+  }
+  #dialog .who{font-size:13px; font-weight:700; letter-spacing:1px; margin-bottom:5px}
+  #dialog .txt{font-size:13px; line-height:1.5; color:#d7e0ec; min-height:38px}
+  #dialog .hint{margin-top:7px; font-size:10px; color:var(--dim); letter-spacing:1px}
+  #dialog .hint b{color:var(--neon-cyan)}
+  /* terminal */
+  #term{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:600px; max-width:92%; display:none;
+    background:#02040a; border:1px solid #1d3a2a; border-radius:8px;
+    box-shadow:0 0 0 1px #000, 0 0 40px #0a2a1a, 0 20px 60px #000d;
+    font-size:13px;
+  }
+  #term .bar{
+    display:flex; align-items:center; gap:8px; padding:8px 12px;
+    border-bottom:1px solid #14301f; color:var(--neon-green);
+    font-size:11px; letter-spacing:2px;
+  }
+  #term .bar .dot{width:8px;height:8px;border-radius:50%;background:var(--neon-green);
+    box-shadow:0 0 8px var(--neon-green)}
+  #term .bar .x{margin-left:auto; color:var(--dim); cursor:pointer}
+  #term .body{padding:12px 14px; height:280px; overflow-y:auto; color:#bfe8c8; line-height:1.55}
+  #term .body .p{color:var(--neon-green)}
+  #term .body .h{color:var(--neon-amber)}
+  #term .body .e{color:var(--neon-red)}
+  #term .body .i{color:#8fa3b8}
+  #term .in{display:flex; gap:6px; padding:9px 14px; border-top:1px solid #14301f; align-items:center}
+  #term .in .ps{color:var(--neon-green)}
+  #term input{
+    flex:1; background:transparent; border:0; outline:0; color:#d8ffe0;
+    font:inherit; caret-color:var(--neon-green);
+  }
+  #help{
+    position:absolute; left:12px; top:12px; display:none; z-index:5;
+    background:#070a12f2; border:1px solid #22304a; border-radius:8px;
+    padding:12px 14px; font-size:12px; line-height:1.7; color:#c4cfdd; max-width:340px;
+  }
+  #help h3{margin:0 0 6px; color:var(--neon-cyan); letter-spacing:2px; font-size:12px}
+  #help kbd{
+    background:#131c2b; border:1px solid #26364e; border-bottom-width:2px;
+    border-radius:4px; padding:1px 6px; font:inherit; color:var(--neon-amber);
+  }
+  #help .r{color:var(--dim)}
+  @media (max-width:900px){
+    #wrap{transform:scale(.82); transform-origin:center}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <span class="title">NEON<b>RAIN</b></span>
+    <span id="district">—</span>
+    <span id="objective"></span>
+  </div>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="crt"></div>
+    <div id="flick"></div>
+    <div id="help">
+      <h3>FIELD MANUAL</h3>
+      <div><kbd>W A S D</kbd> / <kbd>←↑↓→</kbd> move</div>
+      <div><kbd>E</kbd> interact / talk / enter</div>
+      <div><kbd>ENTER</kbd> advance dialogue</div>
+      <div><kbd>H</kbd> this help &nbsp; <kbd>M</kbd> sound</div>
+      <div class="r">Terminals take typed commands. Try <span style="color:var(--neon-green)">help</span>.</div>
+      <div class="r">The rain never stops. Neither does the city.</div>
+    </div>
+  </div>
+  <div id="bottom">
+    <div class="panel" id="stats">
+      <div class="lbl">CREDITS</div>
+      <div id="credits">0 ¢</div>
+      <div id="items"></div>
+    </div>
+    <div class="panel" id="log"></div>
+    <div class="panel" id="prompt">[E] interact</div>
+  </div>
+  <div id="dialog">
+    <div class="who"></div>
+    <div class="txt"></div>
+    <div class="hint"><b>[E]</b> / <b>[ENTER]</b> continue</div>
+  </div>
+  <div id="term">
+    <div class="bar"><span class="dot"></span><span id="termtitle">TERMINAL</span><span class="x" id="termx">[ESC] close</span></div>
+    <div class="body" id="termbody"></div>
+    <div class="in"><span class="ps">guest@neonrain:~$</span><input id="terminput" autocomplete="off" spellcheck="false"></div>
+  </div>
+</div>
+<script>
+"use strict";
+window.addEventListener('error',function(e){var d=document.getElementById('log');if(d)d.textContent='PAGE ERR: '+(e.message||'')+' @line '+(e.lineno||'?');});
+/* ============================================================
+   NEON RAIN — a walkable ASCII cyberpunk, one file, no deps.
+   ============================================================ */
+/* ---------- constants ---------- */
+const COLS = 84, ROWS = 28;          // viewport in tiles
+const FONT = 18;
+const cv = document.getElementById('view');
+const cx = cv.getContext('2d');
+let CELL_W = 11, CELL_H = 22;
+(function measure(){
+  cx.font = FONT + 'px monospace';
+  const w = cx.measureText('M').width;
+  CELL_W = Math.max(9, Math.round(w));
+  CELL_H = Math.round(FONT * 1.22);
+  cv.width = COLS * CELL_W; cv.height = ROWS * CELL_H;
+})();
+
+/* ---------- tile legend ----------
+   # wall   . road   ~ puddle   + crosswalk   @ spawn
+   | fence  = rail   x rubble   p planter     o lamp
+   T terminal  D door(city->in)  d door(in->city)
+   G grate     s stall   ? graffiti(hidden)
+   W water     ^ pipe
+------------------------------------------------ */
+const WALK = new Set(['.','~','+','G','@']);
+const SOLID = new Set(['#','|','=','x','p','o','T','D','d','s','?','W','^']);
+
+/* ---------- maps ---------- */
+function norm(rows, w){
+  return rows.map(r => (r + ' '.repeat(w)).slice(0, w));
+}
+
+const MAPS = {};
+
+/* CITY — 120 x 80, built procedurally for exact dimensions */
+function cityRows(){
+  const W=120,H=80;
+  const g=Array.from({length:H},()=>Array(W).fill('#'));
+  const set=(x,y,c)=>{ if(x>=0&&x<W&&y>=0&&y<H) g[y][x]=c; };
+  const rect=(x0,y0,x1,y1,c)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)set(x,y,c); };
+  // main boulevard (rows 14-18)
+  rect(0,14,W-1,18,'.');
+  // second road (rows 45-49)
+  rect(0,45,W-1,49,'.');
+  // vertical streets through corporate row + boulevard
+  for(const c of [27,58,89]) rect(c,0,c+3,18,'.');
+  // midtown plaza (rows 19-44, cols 27-88)
+  rect(27,19,88,44,'.');
+  // back alley (rows 49-70, cols 40-45)
+  rect(40,49,45,70,'.');
+  // docks (rows 50-70, cols 46-119)
+  rect(46,50,119,70,'.');
+  // crosswalks at boulevard intersections
+  for(const c of [27,58,89]) for(const r of [14,18]) for(let k=0;k<4;k++) set(c+k,r,'+');
+  // crosswalk where alley meets second road
+  for(let k=0;k<6;k++) set(40+k,49,'+');
+  // lamps
+  for(const x of [5,20,40,55,75,95,110]){ set(x,14,'o'); set(x,18,'o'); }
+  for(const x of [10,30,70,90,110]){ set(x,45,'o'); set(x,49,'o'); }
+  // doors into interiors
+  set(13,44,'D'); set(104,44,'D');
+  // hidden grate -> undercity
+  set(42,70,'G');
+  // hidden graffiti (the code)
+  set(39,54,'?');
+  // terminals
+  set(35,25,'T'); set(80,30,'T');
+  // market stalls
+  set(50,22,'s'); set(55,22,'s'); set(60,22,'s'); set(50,38,'s'); set(55,38,'s');
+  // planters
+  set(30,20,'p'); set(85,20,'p'); set(30,43,'p'); set(85,43,'p');
+  // dock rubble
+  for(const [x,y] of [[60,55],[75,60],[90,52],[100,65],[70,68]]) set(x,y,'x');
+  // puddles
+  for(const [x,y] of [[20,16],[45,17],[70,15],[95,18],[30,47],[80,46],[50,52],[90,58],[42,60],[43,64]]) set(x,y,'~');
+  // dock rail along top
+  for(let x=46;x<=119;x++){ if(x>=60&&x<=65) continue; set(x,50,'='); }
+  // player spawn
+  set(60,16,'@');
+  return g.map(r=>r.join(''));
+}
+MAPS.city = { name:'Neo-Kowloon', w:120, h:80, rows: cityRows() };
+
+/* DATA DEN — 40 x 24 */
+function denRows(){
+  const W=40,H=24;
+  const g=Array.from({length:H},()=>Array(W).fill('#'));
+  const set=(x,y,c)=>{ if(x>=0&&x<W&&y>=0&&y<H) g[y][x]=c; };
+  const rect=(x0,y0,x1,y1,c)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)set(x,y,c); };
+  rect(1,1,W-2,H-2,'.');
+  for(const y of [3,4,9,10,15,16]) for(let x=3;x<=W-4;x+=5) rect(x,y,x+2,y,'#');
+  set(20,12,'T');
+  set(20,22,'d');
+  set(4,7,'^'); set(35,7,'^'); set(4,18,'^'); set(35,18,'^');
+  return g.map(r=>r.join(''));
+}
+MAPS.den = { name:'Data Den', w:40, h:24, rows: denRows() };
+
+/* CHROME LOTUS (bar) — 40 x 24 */
+function barRows(){
+  const W=40,H=24;
+  const g=Array.from({length:H},()=>Array(W).fill('#'));
+  const set=(x,y,c)=>{ if(x>=0&&x<W&&y>=0&&y<H) g[y][x]=c; };
+  const rect=(x0,y0,x1,y1,c)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)set(x,y,c); };
+  rect(1,1,W-2,H-2,'.');
+  rect(6,3,33,4,'#');            // bar counter
+  for(let x=8;x<=32;x+=4) set(x,6,'p'); // stools
+  rect(2,16,7,20,'#');           // booths
+  rect(32,16,37,20,'#');
+  set(20,22,'d');
+  set(36,2,'T');
+  return g.map(r=>r.join(''));
+}
+MAPS.bar = { name:'Chrome Lotus', w:40, h:24, rows: barRows() };
+
+/* UNDERCITY — 48 x 28 */
+function underRows(){
+  const W=48,H=28;
+  const g=Array.from({length:H},()=>Array(W).fill('#'));
+  const set=(x,y,c)=>{ if(x>=0&&x<W&&y>=0&&y<H) g[y][x]=c; };
+  const rect=(x0,y0,x1,y1,c)=>{ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)set(x,y,c); };
+  rect(1,12,46,26,'.');          // main cavern
+  rect(22,2,25,12,'.');          // vertical shaft
+  set(23,3,'G');                 // grate (entry/exit)
+  rect(4,18,14,24,'W');          // water pools
+  rect(30,18,40,24,'W');
+  rect(41,20,45,26,'.');         // dry vault
+  set(43,23,'T');
+  for(let x=3;x<=44;x+=7) set(x,11,'^');
+  for(const [x,y] of [[8,13],[18,14],[28,13],[38,15]]) set(x,y,'x');
+  for(const [x,y] of [[10,15],[25,13],[40,14]]) set(x,y,'~');
+  return g.map(r=>r.join(''));
+}
+MAPS.under = { name:'The Undercity', w:48, h:28, rows: underRows() };
+
+/* ---------- helpers ---------- */
+function clamp(v,a,b){ return v<a?a:v>b?b:v; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function seededRand(n){ const x=Math.sin(n*127.1+311.7)*43758.5453; return x-Math.floor(x); }
+function dist2(ax,ay,bx,by){ const dx=ax-bx,dy=ay-by; return dx*dx+dy*dy; }
+
+/* ---------- state ---------- */
+const S = {
+  map:'city', w:0, h:0,
+  grid:[], walk:[], windows:[],
+  lights:[], signs:[], npcs:[], vehicles:[],
+  rain:[], splashes:[],
+  player:{ x:0,y:0, px:0,py:0, tx:null,ty:null, dir:'S', moving:false, speed:8 },
+  cam:{ x:0, y:0 },
+  credits:50, items:[],
+  quest:'find_rin',
+  flags:{},
+  log:[],
+  time:0,
+  dialog:null,      // {who,color,lines,idx,onEnd}
+  term:null,        // {id,title,lines,input}
+  muted:false,
+};
+
+/* ---------- map loading ---------- */
+function loadMap(name, spawn){
+  const def = MAPS[name];
+  S.map=name; S.w=def.w; S.h=def.h;
+  S.grid = def.rows.map(r=>r.split(''));
+  S.walk=[]; S.windows=[]; S.lights=[]; S.signs=[]; S.npcs=[]; S.vehicles=[];
+  for(let y=0;y<S.h;y++){
+    S.walk.push([]); S.windows.push([]);
+    for(let x=0;x<S.w;x++){
+      const c=S.grid[y][x];
+      S.walk[y].push(WALK.has(c));
+      S.windows[y].push(c==='#' && seededRand(x*7.13+y*13.7+name.length*3.1)<0.055);
+      if(c==='o') S.lights.push({x,y,r:5.5,i:0.55,color:[255,190,110]});
+      if(c==='T') S.lights.push({x,y,r:4.5,i:0.5,color:[90,255,150]});
+      if(c==='D'||c==='d') S.lights.push({x,y,r:4,i:0.45,color:[120,200,255]});
+      if(c==='G') S.lights.push({x,y,r:3,i:0.25,color:[120,255,200]});
+    }
+  }
+  setupEntities(name);
+  // player spawn
+  let sx=spawn?spawn[0]:null, sy=spawn?spawn[1]:null;
+  if(sx==null){
+    outer: for(let y=0;y<S.h;y++) for(let x=0;x<S.w;x++) if(S.grid[y][x]==='@'){ sx=x; sy=y; break outer; }
+    if(sx==null){ sx=Math.floor(S.w/2); sy=Math.floor(S.h/2); }
+  }
+  const p=S.player;
+  p.x=sx; p.y=sy; p.px=sx; p.py=sy; p.tx=null; p.ty=null; p.moving=false; p.dir='S';
+  S.cam.x=clamp(p.px-COLS/2,0,Math.max(0,S.w-COLS));
+  S.cam.y=clamp(p.py-ROWS/2,0,Math.max(0,S.h-ROWS));
+  S.rain=[]; for(let i=0;i<150;i++) S.rain.push(newDrop(true));
+  S.splashes=[];
+}
+
+/* ---------- entity setup per map ---------- */
+function setupEntities(name){
+  if(name==='city'){
+    S.signs.push(
+      {x:3,  y:13, text:'KIRIN DYNAMICS', color:[55,230,255],  vertical:false, flicker:0.10, broken:false, phase:0},
+      {x:34, y:13, text:'NEON DYNASTY',   color:[255,79,216],  vertical:false, flicker:0.20, broken:false, phase:1},
+      {x:65, y:13, text:'ARCO-HEX',       color:[93,255,156],  vertical:false, flicker:0.15, broken:false, phase:2},
+      {x:96, y:13, text:'OMNI-TECH',      color:[255,194,75],  vertical:false, flicker:0.10, broken:false, phase:3},
+      {x:26, y:21, text:'DATA DEN',       color:[93,255,156],  vertical:true,  flicker:0.30, broken:false, phase:4},
+      {x:26, y:34, text:'RAMEN',          color:[255,84,112],  vertical:true,  flicker:0.10, broken:false, phase:5},
+      {x:89, y:21, text:'CHROME LOTUS',   color:[255,79,216],  vertical:true,  flicker:0.20, broken:false, phase:6},
+      {x:89, y:34, text:'NO FUTURE',      color:[176,123,255], vertical:false, flicker:0.55, broken:true,  phase:7},
+      {x:8,  y:50, text:'CARGO',          color:[255,194,75],  vertical:false, flicker:0.10, broken:false, phase:8},
+    );
+    S.npcs.push(
+      mkNpc('rin','RIN',55,30,8,[93,255,156],rinLines),
+      mkNpc('drifter','DRIFTER',30,16,10,[176,123,255],drifterLines),
+      mkNpc('kai','KAI',60,38,6,[255,194,75],kaiLines),
+    );
+    S.vehicles.push(
+      {id:'taxi', type:'taxi', color:[255,220,80], speed:3.2,
+       path:[[5,15],[110,15],[110,17],[5,17]], pi:0, x:5,y:15, px:5,py:15, dir:'E'},
+      {id:'truck', type:'truck', color:[205,215,225], speed:1.6,
+       path:[[10,46],[110,46],[110,48],[10,48]], pi:0, x:10,y:46, px:10,py:46, dir:'E'},
+    );
+  } else if(name==='den'){
+    S.signs.push({x:6,y:2,text:'GHOST SIGNAL',color:[55,230,255],vertical:false,flicker:0.4,broken:true,phase:1});
+    S.lights.push({x:20,y:12,r:6,i:0.5,color:[90,255,150]});
+  } else if(name==='bar'){
+    S.signs.push({x:8,y:2,text:'CHROME LOTUS',color:[255,79,216],vertical:false,flicker:0.2,broken:false,phase:2});
+    S.npcs.push(
+      mkNpc('mama','MAMA',12,8,4,[255,194,75],mamaLines),
+      mkNpc('vex','VEX',34,18,3,[255,84,112],vexLines),
+    );
+  } else if(name==='under'){
+    S.signs.push({x:6,y:13,text:'SECTOR 9',color:[120,255,200],vertical:false,flicker:0.3,broken:true,phase:3});
+    S.npcs.push(mkNpc('wraith','WRAITH',43,22,2,[176,123,255],wraithLines));
+  }
+}
+function mkNpc(id,name,x,y,radius,color,linesFn){
+  return {id,name,x,y,px:x,py:y,tx:null,ty:null,dir:'S',homeX:x,homeY:y,radius,
+          color,state:'idle',timer:Math.random()*2,lines:linesFn(),talked:false};
+}
+
+/* ---------- NPC dialogue (quest-aware) ---------- */
+function rinLines(){
+  if(!S.flags.codeFound){
+    return [
+      "You're new. I can smell the rain on you.",
+      "Listen. There's a chip out there — the GHOST SIGNAL. Someone hid it in the Data Den, west of the plaza.",
+      "The door's locked. Four digits. I saw a fixer scratch it in red paint, back alley by the warehouses. South of here.",
+      "Find the code, get the chip, bring it to Vex at the Chrome Lotus. He pays. He always pays.",
+    ];
+  }
+  if(!S.flags.chipGot){
+    return ["You found the code? Good. The Data Den door takes it. Then the terminal inside — type 'code' and the digits.","Hurry. The rain's getting louder, and that means they're close."];
+  }
+  if(!S.flags.delivered){
+    return ["You've got it. I can feel the static. Vex is in the Chrome Lotus, east of the plaza. Don't let it leave your hand."];
+  }
+  return ["The ghost is free now. Or it's wearing you. Same thing, in this city."];
+}
+function drifterLines(){
+  return [
+    "They say the whole city runs on borrowed light.",
+    "Taxi's twenty credits if you want to skip the walk. Docks, anywhere.",
+    "Don't trust the ones who smile in the rain.",
+  ];
+}
+function kaiLines(){
+  return [
+    "Fresh noodles, hot oil, no questions. Stall's got a terminal if you want to browse.",
+    "Medkits, stims, the works. Fair price for a face that's seen rain.",
+  ];
+}
+function mamaLines(){
+  return [
+    "Sit. Drink. The lotus blooms even in the gutter.",
+    "Vex keeps to the back booth. Red jacket, bad reputation.",
+    "I'll sell you a medkit if your luck runs out. Thirty credits.",
+  ];
+}
+function vexLines(){
+  if(!S.flags.chipGot) return ["I don't buy rumors. Come back when you're holding something I can't copy."];
+  if(!S.flags.delivered){
+    return [
+      "So. You actually found the Ghost Signal.",
+      "Hand it over. 500 credits, and a warning: whoever's hunting that chip will be hunting you next.",
+      "You're the ghost now. Wear it well.",
+    ];
+  }
+  return ["Deal's done. The city keeps its secrets — for a price."];
+}
+function wraithLines(){
+  if(!S.flags.wraithPaid) return [
+    "You found the grate. Most don't.",
+    "I've been down here since the old city drowned. Take this — 200 credits and a medkit. You'll need both.",
+    "The vault terminal's to the east. It remembers more than it should.",
+  ];
+  return ["The Undercity keeps what it's given. Leave quietly."];
+}
+
+/* ---------- input ---------- */
+const dirStack=[];
+const KEYDIR={KeyW:'N',ArrowUp:'N',KeyS:'S',ArrowDown:'S',KeyA:'W',ArrowLeft:'W',KeyD:'E',ArrowRight:'E'};
+addEventListener('keydown',e=>{
+  audioResume();
+  const k=e.code;
+  // terminal open?
+  if(S.term){ termKey(e); return; }
+  // dialogue open?
+  if(S.dialog){
+    if(k==='KeyE'||k==='Enter'||k==='Space'){ e.preventDefault(); advanceDialog(); }
+    return;
+  }
+  if(k==='KeyH'){ toggleHelp(); return; }
+  if(k==='KeyM'){ S.muted=!S.muted; audioSetMuted(S.muted); log(S.muted?'sound off':'sound on','dim'); return; }
+  if(k==='KeyE'){ e.preventDefault(); interact(); return; }
+  const d=KEYDIR[k];
+  if(d){ e.preventDefault(); if(!dirStack.includes(d)) dirStack.push(d); }
+});
+addEventListener('keyup',e=>{
+  const d=KEYDIR[e.code];
+  if(d){ const i=dirStack.indexOf(d); if(i>=0) dirStack.splice(i,1); }
+});
+
+/* ---------- movement / collision ---------- */
+function isWalkable(x,y){
+  if(x<0||y<0||x>=S.w||y>=S.h) return false;
+  return S.walk[y][x];
+}
+function entityBlocked(x,y){
+  for(const n of S.npcs) if(n.x===x&&n.y===y) return true;
+  for(const v of S.vehicles) if(v.x===x&&v.y===y) return true;
+  return false;
+}
+function tryMove(d){
+  const p=S.player;
+  const dx=d==='E'?1:d==='W'?-1:0;
+  const dy=d==='N'?-1:d==='S'?1:0;
+  p.dir=d;
+  const nx=p.x+dx, ny=p.y+dy;
+  if(isWalkable(nx,ny)&&!entityBlocked(nx,ny)){
+    p.tx=nx; p.ty=ny; p.moving=true;
+  }
+}
+function updatePlayer(dt){
+  const p=S.player;
+  if(p.moving){
+    const dx=p.tx-p.px, dy=p.ty-p.py;
+    const dist=Math.hypot(dx,dy);
+    const step=p.speed*dt;
+    if(step>=dist){ p.px=p.tx; p.py=p.ty; p.x=p.tx; p.y=p.ty; p.moving=false; }
+    else { p.px+=dx/dist*step; p.py+=dy/dist*step; }
+  } else if(dirStack.length){
+    tryMove(dirStack[dirStack.length-1]);
+  }
+}
+function updateCamera(){
+  const p=S.player;
+  S.cam.x = S.w<=COLS ? (S.w-COLS)/2 : clamp(p.px-COLS/2,0,S.w-COLS);
+  S.cam.y = S.h<=ROWS ? (S.h-ROWS)/2 : clamp(p.py-ROWS/2,0,S.h-ROWS);
+}
+
+/* ---------- NPC update ---------- */
+function updateNPC(n,dt){
+  if(n.state==='idle'){
+    n.timer-=dt;
+    if(n.timer<=0){
+      let moved=false;
+      for(let t=0;t<12;t++){
+        const dx=Math.floor(Math.random()*2*n.radius+1)-n.radius;
+        const dy=Math.floor(Math.random()*2*n.radius+1)-n.radius;
+        const nx=n.homeX+dx, ny=n.homeY+dy;
+        if(isWalkable(nx,ny)&&!entityBlocked(nx,ny)){ n.tx=nx; n.ty=ny; n.state='walk'; moved=true; break; }
+      }
+      if(!moved) n.timer=0.8+Math.random()*2;
+    }
+  } else {
+    const dx=n.tx-n.px, dy=n.ty-n.py;
+    const dist=Math.hypot(dx,dy);
+    const step=2.4*dt;
+    if(step>=dist){ n.px=n.tx; n.py=n.ty; n.x=n.tx; n.y=n.ty; n.state='idle'; n.timer=1+Math.random()*3; }
+    else {
+      n.px+=dx/dist*step; n.py+=dy/dist*step;
+      if(Math.abs(dx)>Math.abs(dy)) n.dir=dx>0?'E':'W'; else n.dir=dy>0?'S':'N';
+    }
+  }
+}
+
+/* ---------- vehicle update ---------- */
+function updateVehicle(v,dt){
+  const target=v.path[(v.pi+1)%v.path.length];
+  const dx=target[0]-v.px, dy=target[1]-v.py;
+  const dist=Math.hypot(dx,dy);
+  const step=v.speed*dt;
+  if(step>=dist){
+    v.px=target[0]; v.py=target[1]; v.pi=(v.pi+1)%v.path.length;
+  } else {
+    v.px+=dx/dist*step; v.py+=dy/dist*step;
+    if(Math.abs(dx)>Math.abs(dy)) v.dir=dx>0?'E':'W'; else v.dir=dy>0?'S':'N';
+  }
+  v.x=Math.round(v.px); v.y=Math.round(v.py);
+}
+
+/* ---------- rain ---------- */
+function newDrop(anywhere){
+  return { x:Math.random()*(COLS+12)-6, y:anywhere?Math.random()*ROWS:-2-Math.random()*6,
+           len:1+Math.floor(Math.random()*2), speed:22+Math.random()*16 };
+}
+function updateRain(dt){
+  for(const d of S.rain){
+    d.y+=d.speed*dt; d.x-=d.speed*0.22*dt;
+    if(d.y>ROWS+2){ d.x=Math.random()*(COLS+12)-6; d.y=-2-Math.random()*6; }
+  }
+  if(Math.random()<0.5){
+    const wx=Math.floor(S.cam.x+Math.random()*COLS), wy=Math.floor(S.cam.y+Math.random()*ROWS);
+    if(wx>=0&&wy>=0&&wx<S.w&&wy<S.h&&S.walk[wy][wx]) S.splashes.push({x:wx,y:wy,life:0.35,max:0.35});
+  }
+  for(let i=S.splashes.length-1;i>=0;i--){ S.splashes[i].life-=dt; if(S.splashes[i].life<=0) S.splashes.splice(i,1); }
+}
+
+/* ---------- interact ---------- */
+function interact(){
+  const p=S.player;
+  // NPC within 1 tile
+  for(const n of S.npcs){
+    if(Math.abs(n.x-p.x)+Math.abs(n.y-p.y)<=1){ talkTo(n); return; }
+  }
+  const dx=p.dir==='E'?1:p.dir==='W'?-1:0;
+  const dy=p.dir==='N'?-1:p.dir==='S'?1:0;
+  if(handleTile(p.x+dx,p.y+dy)) return;
+  handleTile(p.x,p.y);
+}
+function handleTile(x,y){
+  if(x<0||y<0||x>=S.w||y>=S.h) return false;
+  const c=S.grid[y][x];
+  if(c==='D'){ enterDoor(x,y); return true; }
+  if(c==='d'){ exitDoor(x,y); return true; }
+  if(c==='T'){ openTerminal(x,y); return true; }
+  if(c==='s'){ browseStall(x,y); return true; }
+  if(c==='?'){ revealGraffiti(x,y); return true; }
+  if(c==='G'){ enterGrate(x,y); return true; }
+  for(const v of S.vehicles){ if(v.x===x&&v.y===y){ hailVehicle(v); return true; } }
+  return false;
+}
+function enterDoor(x,y){
+  if(x===13&&y===44){
+    if(S.flags.codeFound){ log('The keypad accepts the code. The door hisses open.','sys'); loadMap('den',[20,20]); }
+    else log('The keypad blinks. Four digits. You don\'t have them.','bad');
+  } else if(x===104&&y===44){
+    log('You push into the Chrome Lotus. The noise hits you first.','sys');
+    loadMap('bar',[20,20]);
+  }
+  setDistrict();
+}
+function exitDoor(x,y){
+  if(S.map==='den') loadMap('city',[13,45]);
+  else if(S.map==='bar') loadMap('city',[104,45]);
+  setDistrict();
+}
+function enterGrate(x,y){
+  log('The grate groans open. Cold air rises from below.','sys');
+  loadMap('under',[23,4]);
+  setDistrict();
+}
+function revealGraffiti(x,y){
+  if(S.flags.codeFound){ log('The red paint still glows: 7 3 4 1.','dim'); return; }
+  S.flags.codeFound=true; S.quest='enter_den';
+  log('Red paint, half-washed by rain: 7 3 4 1.','good');
+  log('Objective: enter the Data Den (west of the plaza).','sys');
+  setObjective(); audioBlip(1200);
+}
+function hailVehicle(v){
+  if(v.type==='taxi'){
+    if(S.credits>=20){ S.credits-=20; log('The taxi drops you at the docks. -20 credits.','sys'); loadMap('city',[62,52]); setDistrict(); }
+    else log('The driver shakes his head. You need 20 credits.','bad');
+  } else log('The truck doesn\'t stop for pedestrians.','dim');
+}
+function browseStall(x,y){
+  if(x===60&&y===22 && !S.flags.stashFound){
+    S.flags.stashFound=true; S.credits+=120; addItem('old keycard');
+    log('Behind the stall: a loose panel. 120 credits and an old keycard.','good');
+    audioBlip(1000); return;
+  }
+  const f=["Noodles. Hot. No questions.","Synth-arms, secondhand. Don't ask.","Rain gear. Waterproof, mostly.","Chips. Real ones, not the ghost kind."];
+  openDialog('STALL',[255,194,75],[f[Math.floor(Math.random()*f.length)]]);
+}
+
+/* ---------- talk / quest ---------- */
+function talkTo(n){
+  openDialog(n.name,n.color,n.lines,()=>{ n.talked=true; onTalkEnd(n); });
+  audioBlip(600);
+}
+function onTalkEnd(n){
+  if(n.id==='rin'&&S.quest==='find_rin'){ S.quest='find_code'; setObjective(); log('Objective: find the red graffiti in the back alley (south).','sys'); }
+  if(n.id==='vex'&&S.flags.chipGot&&!S.flags.delivered){
+    S.flags.delivered=true; S.credits+=500; S.items=S.items.filter(i=>i!=='ghost chip');
+    S.quest='done'; setObjective();
+    log('Vex pays 500 credits. The chip is gone.','good');
+    log('You are the ghost now.','sys');
+  }
+  if(n.id==='wraith'&&!S.flags.wraithPaid){
+    S.flags.wraithPaid=true; S.credits+=200; addItem('medkit');
+    log('Wraith gives you 200 credits and a medkit.','good');
+  }
+}
+
+/* ---------- inventory ---------- */
+function addItem(it){ if(!S.items.includes(it)) S.items.push(it); updateHUD(); }
+function removeItem(it){ const i=S.items.indexOf(it); if(i>=0) S.items.splice(i,1); updateHUD(); }
+
+/* ---------- dialogue UI ---------- */
+const dlgEl=document.getElementById('dialog');
+const dlgWho=dlgEl.querySelector('.who');
+const dlgTxt=dlgEl.querySelector('.txt');
+function openDialog(who,color,lines,onEnd){
+  S.dialog={who,color,lines,idx:0,onEnd};
+  dlgWho.textContent=who;
+  dlgWho.style.color='rgb('+color.join(',')+')';
+  dlgWho.style.textShadow='0 0 8px rgba('+color.join(',')+',0.6)';
+  dlgTxt.textContent=lines[0];
+  dlgEl.style.display='block';
+}
+function advanceDialog(){
+  const d=S.dialog; if(!d) return;
+  d.idx++;
+  if(d.idx>=d.lines.length){
+    dlgEl.style.display='none';
+    const cb=d.onEnd; S.dialog=null; if(cb) cb();
+  } else dlgTxt.textContent=d.lines[d.idx];
+  audioBlip(500);
+}
+
+/* ---------- HUD ---------- */
+const elDistrict=document.getElementById('district');
+const elObjective=document.getElementById('objective');
+const elCredits=document.getElementById('credits');
+const elItems=document.getElementById('items');
+const elLog=document.getElementById('log');
+const elPrompt=document.getElementById('prompt');
+function setDistrict(){ elDistrict.textContent=S.map==='city'?'Neo-Kowloon':MAPS[S.map].name; }
+function setObjective(){
+  const q=S.quest;
+  const txt={
+    find_rin:'Find Rin at the market (plaza, south of the boulevard)',
+    find_code:'Find the red graffiti in the back alley (south)',
+    enter_den:'Enter the Data Den (west of the plaza) — code 7341',
+    get_chip:'Get the GHOST SIGNAL from the Data Den terminal',
+    deliver:'Deliver the chip to Vex at the Chrome Lotus (east)',
+    done:'The city is yours. (H help · M sound)',
+  }[q]||'';
+  elObjective.innerHTML='<span class="k">OBJECTIVE</span> '+txt;
+}
+function updateHUD(){
+  elCredits.textContent=S.credits+' ¢';
+  elItems.innerHTML=S.items.length?('ITEMS '+S.items.map(i=>'<span class="it">'+i+'</span>').join(' · ')):'ITEMS —';
+}
+function log(msg,cls){
+  S.log.push({msg,cls}); if(S.log.length>40) S.log.shift();
+  elLog.innerHTML=S.log.slice(-4).map(l=>'<div class="logline '+(l.cls||'')+'">'+l.msg+'</div>').join('');
+}
+function updatePrompt(){
+  const p=S.player;
+  const dx=p.dir==='E'?1:p.dir==='W'?-1:0, dy=p.dir==='N'?-1:p.dir==='S'?1:0;
+  let txt='';
+  for(const n of S.npcs){ if(Math.abs(n.x-p.x)+Math.abs(n.y-p.y)<=1){ txt='[E] Talk to '+n.name; break; } }
+  if(!txt){
+    const fx=p.x+dx, fy=p.y+dy;
+    const c=(fx>=0&&fy>=0&&fx<S.w&&fy<S.h)?S.grid[fy][fx]:null;
+    const cc=(p.x>=0&&p.y>=0&&p.x<S.w&&p.y<S.h)?S.grid[p.y][p.x]:null;
+    const pick=c||cc;
+    if(c==='D') txt='[E] Enter';
+    else if(c==='d') txt='[E] Leave';
+    else if(c==='T') txt='[E] Terminal';
+    else if(c==='s') txt='[E] Browse stall';
+    else if(c==='?') txt='[E] Examine wall';
+    else if(c==='G') txt='[E] Pry the grate';
+    else if(cc==='G') txt='[E] Pry the grate';
+    else for(const v of S.vehicles){ if(v.x===p.x+dx&&v.y===p.y+dy){ txt='[E] Hail '+v.type; break; } }
+  }
+  elPrompt.textContent=txt||'[E] interact';
+}
+function toggleHelp(){
+  const h=document.getElementById('help');
+  h.style.display=h.style.display==='block'?'none':'block';
+}
+
+/* ---------- terminal ---------- */
+const termEl=document.getElementById('term');
+const termBody=document.getElementById('termbody');
+const termInput=document.getElementById('terminput');
+const termTitle=document.getElementById('termtitle');
+let hackState=null;
+function showTerm(){ termEl.style.display='block'; termTitle.textContent=S.term.title; setTimeout(()=>termInput.focus(),0); }
+function hideTerm(){ termEl.style.display='none'; S.term=null; hackState=null; }
+function termPrint(cls,txt){
+  const div=document.createElement('div');
+  if(cls) div.className=cls;
+  div.textContent=txt;
+  termBody.appendChild(div);
+  termBody.scrollTop=termBody.scrollHeight;
+}
+function openTerminal(x,y){
+  let id='city', title='KIRIN-OS v9.4';
+  if(S.map==='den'){ id='den'; title='VAULT TERMINAL'; }
+  else if(S.map==='bar'){ id='bar'; title='LOTUS NET'; }
+  else if(S.map==='under'){ id='under'; title='SECTOR-9 RELAY'; }
+  S.term={id,title};
+  termBody.innerHTML='';
+  termPrint('p','> '+title+' — guest session');
+  termPrint('i','type "help" for commands');
+  showTerm(); audioBlip(800);
+}
+document.getElementById('termx').addEventListener('click',hideTerm);
+function termKey(e){
+  if(e.code==='Escape'){ e.preventDefault(); hideTerm(); return; }
+  if(hackState){
+    const map={ArrowUp:'↑',ArrowDown:'↓',ArrowLeft:'←',ArrowRight:'→'};
+    if(map[e.code]){
+      e.preventDefault();
+      hackState.input.push(map[e.code]);
+      termPrint('p','> '+hackState.input.join(' '));
+      if(hackState.input.length===hackState.seq.length){
+        const ok=hackState.input.every((c,i)=>c===hackState.seq[i]);
+        if(ok){
+          termPrint('h','ACCESS GRANTED. Vault unlocked.');
+          grantChip();
+          hackState=null;
+        } else {
+          termPrint('e','SEQUENCE FAILED. Traceback detected. New sequence:');
+          startHack();
+        }
+      }
+      return;
+    }
+    return;
+  }
+  if(e.code==='Enter'){
+    const cmd=termInput.value.trim();
+    termInput.value='';
+    if(cmd) termExec(cmd);
+    return;
+  }
+}
+function grantChip(){
+  if(S.flags.chipGot) return;
+  S.flags.chipGot=true; addItem('ghost chip'); S.quest='deliver';
+  log('GHOST SIGNAL acquired.','good');
+  log('Objective: deliver the chip to Vex at the Chrome Lotus.','sys');
+  setObjective(); updateHUD();
+}
+function startHack(){
+  const dirs=['↑','↓','←','→'];
+  const seq=[]; for(let i=0;i<4;i++) seq.push(dirs[Math.floor(Math.random()*4)]);
+  hackState={seq,input:[]};
+  termPrint('h','HACK MODE. Repeat:  '+seq.join(' '));
+  termPrint('i','press the arrow keys in order. Esc aborts.');
+}
+function termExec(cmd){
+  termPrint('p','guest@neonrain:~$ '+cmd);
+  const parts=cmd.split(/\s+/);
+  const c=parts[0].toLowerCase();
+  const t=S.term;
+  switch(c){
+    case 'help':
+      termPrint('i','commands: help · scan · buy · sell · credits · info');
+      if(t.id==='den') termPrint('i','vault: code <4 digits> · hack');
+      break;
+    case 'credits': termPrint('h','balance: '+S.credits+' credits'); break;
+    case 'info': termPrint('i','district: '+MAPS[S.map].name); break;
+    case 'scan': termExecScan(); break;
+    case 'buy':
+      if(parts[1]==='medkit'){
+        if(S.credits>=30){ S.credits-=30; addItem('medkit'); termPrint('h','purchased medkit. -30 credits'); updateHUD(); }
+        else termPrint('e','insufficient credits (need 30).');
+      } else if(parts[1]==='stim'){
+        if(S.credits>=15){ S.credits-=15; termPrint('h','stim purchased. the rain blurs a little less. -15 credits'); }
+        else termPrint('e','insufficient credits (need 15).');
+      } else termPrint('i','buy medkit (30) · buy stim (15)');
+      break;
+    case 'sell':
+      if(parts[1]==='old keycard'&&S.items.includes('old keycard')){
+        removeItem('old keycard'); S.credits+=40; termPrint('h','sold old keycard. +40 credits'); updateHUD();
+      } else termPrint('i','nothing worth selling (try: sell old keycard).');
+      break;
+    case 'code':
+      if(t.id==='den'){
+        if(parts[1]==='7341'){
+          if(S.flags.chipGot) termPrint('h','vault already drained.');
+          else { termPrint('h','VAULT UNLOCKED. Retrieving GHOST SIGNAL...'); termPrint('h','chip transferred to your deck.'); grantChip(); }
+        } else termPrint('e','ACCESS DENIED. Invalid code.');
+      } else termPrint('e','no vault here.');
+      break;
+    case 'hack':
+      if(t.id==='den'){ if(S.flags.chipGot) termPrint('h','vault already drained.'); else startHack(); }
+      else termPrint('e','nothing to hack here.');
+      break;
+    default: termPrint('e','unknown command: '+c+' (try help)');
+  }
+  audioBlip(700);
+}
+function termExecScan(){
+  const p=S.player; let found=[];
+  for(let y=p.y-8;y<=p.y+8;y++)for(let x=p.x-8;x<=p.x+8;x++){
+    if(x<0||y<0||x>=S.w||y>=S.h) continue;
+    const c=S.grid[y][x];
+    if(c==='?'&&!S.flags.codeFound) found.push('faint red markings on a wall near '+x+','+y);
+    if(c==='G'&&S.map==='city') found.push('a loose grate near '+x+','+y);
+  }
+  if(found.length===0) termPrint('i','scan complete. nothing unusual nearby.');
+  else found.forEach(f=>termPrint('h','scan: '+f));
+}
+
+/* ---------- audio (WebAudio synth) ---------- */
+let AC=null, masterGain=null;
+function audioResume(){
+  if(AC){ if(AC.state==='suspended') AC.resume(); return; }
+  try{
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    masterGain=AC.createGain(); masterGain.gain.value=S.muted?0:0.5; masterGain.connect(AC.destination);
+    // rain: filtered noise
+    const bufSize=2*AC.sampleRate, buf=AC.createBuffer(1,bufSize,AC.sampleRate);
+    const data=buf.getChannelData(0);
+    for(let i=0;i<bufSize;i++) data[i]=Math.random()*2-1;
+    const src=AC.createBufferSource(); src.buffer=buf; src.loop=true;
+    const filter=AC.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value=750;
+    const g=AC.createGain(); g.gain.value=0.05;
+    src.connect(filter); filter.connect(g); g.connect(masterGain); src.start();
+    // hum: low drone
+    const osc=AC.createOscillator(); osc.type='sine'; osc.frequency.value=54;
+    const hg=AC.createGain(); hg.gain.value=0.028;
+    osc.connect(hg); hg.connect(masterGain); osc.start();
+  }catch(e){}
+}
+function audioBlip(freq){
+  if(!AC||S.muted) return;
+  const osc=AC.createOscillator(); osc.type='square'; osc.frequency.value=freq;
+  const g=AC.createGain(); g.gain.value=0.07;
+  g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.14);
+  osc.connect(g); g.connect(masterGain);
+  osc.start(); osc.stop(AC.currentTime+0.15);
+}
+function audioSetMuted(m){ if(masterGain) masterGain.gain.value=m?0:0.5; }
+
+/* ---------- lighting ---------- */
+function lightContrib(lx,ly,wx,wy,r,i){
+  const d2=dist2(lx,ly,wx,wy);
+  if(d2>r*r) return 0;
+  return i*(1-Math.sqrt(d2)/r);
+}
+function tileBrightness(wx,wy){
+  let b=0.15;
+  b+=lightContrib(S.player.px,S.player.py,wx,wy,4.5,0.5);
+  for(const L of S.lights) b+=lightContrib(L.x,L.y,wx,wy,L.r,L.i);
+  return Math.min(1.35,b);
+}
+
+/* ---------- tile colors ---------- */
+function tileColor(c,b,wx,wy){
+  let r,g,bl;
+  switch(c){
+    case '#':
+      if(S.windows[wy]&&S.windows[wy][wx]){ r=255;g=190;bl=110; b=Math.max(b,0.55); }
+      else { r=28;g=34;bl=50; }
+      break;
+    case '.': r=50;g=56;bl=70; break;
+    case '~': r=72;g=96;bl=118; break;
+    case '+': r=92;g=98;bl=112; break;
+    case 'o': r=255;g=200;bl=120; b=1; break;
+    case 'T': r=90;g=255;bl=150; b=1; break;
+    case 'D': case 'd': r=120;g=200;bl=255; b=1; break;
+    case 'G': r=120;g=255;bl=200; b=1; break;
+    case 's': r=255;g=194;bl=75; b=1; break;
+    case '?': r=255;g=84;bl=112; b=S.flags.codeFound?0.85:0.35; break;
+    case 'x': r=62;g=56;bl=50; break;
+    case 'p': r=52;g=84;bl=62; break;
+    case '|': r=72;g=78;bl=90; break;
+    case '=': r=84;g=90;bl=102; break;
+    case 'W': r=28;g=58;bl=92; break;
+    case '^': r=62;g=68;bl=80; break;
+    case '@': r=50;g=56;bl=70; break;
+    default: r=18;g=22;bl=30;
+  }
+  r=Math.min(255,r*b); g=Math.min(255,g*b); bl=Math.min(255,bl*b);
+  return 'rgb('+(r|0)+','+(g|0)+','+(bl|0)+')';
+}
+
+/* ---------- render ---------- */
+function render(){
+  cx.fillStyle='#04050a';
+  cx.fillRect(0,0,cv.width,cv.height);
+  cx.font=FONT+'px monospace';
+  cx.textBaseline='top';
+  const camX=Math.floor(S.cam.x), camY=Math.floor(S.cam.y);
+  // tiles
+  for(let sy=0;sy<ROWS;sy++){
+    const wy=camY+sy;
+    if(wy<0||wy>=S.h) continue;
+    for(let sx=0;sx<COLS;sx++){
+      const wx=camX+sx;
+      if(wx<0||wx>=S.w) continue;
+      const c=S.grid[wy][wx];
+      const b=tileBrightness(wx,wy);
+      cx.fillStyle=tileColor(c,b,wx,wy);
+      cx.fillText(c,sx*CELL_W,sy*CELL_H);
+    }
+  }
+  // puddle reflections (animated neon shimmer)
+  for(let sy=0;sy<ROWS;sy++){
+    const wy=camY+sy; if(wy<0||wy>=S.h) continue;
+    for(let sx=0;sx<COLS;sx++){
+      const wx=camX+sx; if(wx<0||wx>=S.w) continue;
+      if(S.grid[wy][wx]!=='~') continue;
+      const n=seededRand(wx*3.7+wy*9.1+Math.floor(S.time*2));
+      if(n<0.5) continue;
+      const cols=[[55,230,255],[255,79,216],[93,255,156],[255,194,75]];
+      const col=cols[Math.floor(n*40)%cols.length];
+      cx.fillStyle='rgba('+col[0]+','+col[1]+','+col[2]+','+(0.25+0.25*Math.sin(S.time*3+wx))+')';
+      cx.fillText(n<0.75?'.':'o',sx*CELL_W,sy*CELL_H);
+    }
+  }
+  // signs
+  for(const s of S.signs) drawSign(s,camX,camY);
+  // splashes
+  drawSplashes(camX,camY);
+  // vehicles
+  for(const v of S.vehicles) drawVehicle(v,camX,camY);
+  // npcs
+  for(const n of S.npcs) drawNpc(n,camX,camY);
+  // player
+  drawPlayer(camX,camY);
+  // rain (screen space, on top)
+  drawRain();
+}
+function drawSign(s,camX,camY){
+  const t=S.time;
+  let on=1;
+  if(s.flicker>0){
+    const n=seededRand(Math.floor(t*8)+s.phase*97);
+    if(n<s.flicker) on=0.12;
+  }
+  const pulse=0.78+0.22*Math.sin(t*2+s.phase);
+  const alpha=on*pulse;
+  if(alpha<0.04) return;
+  const r=s.color[0],g=s.color[1],b=s.color[2];
+  cx.save();
+  cx.globalAlpha=alpha;
+  cx.shadowColor='rgba('+r+','+g+','+b+',0.85)';
+  cx.shadowBlur=9;
+  cx.fillStyle='rgb('+r+','+g+','+b+')';
+  cx.font='bold '+(FONT-2)+'px monospace';
+  cx.textBaseline='top';
+  let missing=-1;
+  if(s.broken) missing=Math.floor(seededRand(Math.floor(t*2)+s.phase*13)*s.text.length);
+  if(s.vertical){
+    for(let i=0;i<s.text.length;i++){
+      if(i===missing) continue;
+      const sx=s.x-camX, sy=s.y-camY+i;
+      if(sx<0||sx>=COLS||sy<0||sy>=ROWS) continue;
+      cx.fillText(s.text[i],sx*CELL_W,sy*CELL_H);
+    }
+  } else {
+    let str='';
+    for(let i=0;i<s.text.length;i++){ if(i===missing) continue; str+=s.text[i]; }
+    const sx=s.x-camX, sy=s.y-camY;
+    if(sx>-COLS&&sx<COLS&&sy>-ROWS&&sy<ROWS) cx.fillText(str,sx*CELL_W,sy*CELL_H);
+  }
+  cx.restore();
+}
+function drawSplashes(camX,camY){
+  cx.save();
+  cx.font=FONT+'px monospace';
+  cx.textBaseline='top';
+  for(const s of S.splashes){
+    const sx=s.x-camX, sy=s.y-camY;
+    if(sx<0||sx>=COLS||sy<0||sy>=ROWS) continue;
+    const t=1-s.life/s.max;
+    cx.fillStyle='rgba(170,205,235,'+(0.45*(1-t))+')';
+    cx.fillText(t<0.5?'.':'o',sx*CELL_W,sy*CELL_H);
+  }
+  cx.restore();
+}
+function drawVehicle(v,camX,camY){
+  const sx=Math.round(v.px-camX), sy=Math.round(v.py-camY);
+  if(sx<-3||sx>=COLS+3||sy<-3||sy>=ROWS+3) return;
+  cx.save();
+  cx.font=FONT+'px monospace';
+  cx.textBaseline='top';
+  const r=v.color[0],g=v.color[1],b=v.color[2];
+  cx.fillStyle='rgb('+r+','+g+','+b+')';
+  cx.shadowColor='rgba('+r+','+g+','+b+',0.5)';
+  cx.shadowBlur=6;
+  cx.fillText('##',sx*CELL_W,sy*CELL_H);
+  cx.shadowBlur=0;
+  cx.fillStyle='rgba(255,255,220,0.9)';
+  if(v.dir==='E') cx.fillText('>',(sx+2)*CELL_W,sy*CELL_H);
+  else if(v.dir==='W') cx.fillText('<',sx*CELL_W,sy*CELL_H);
+  else if(v.dir==='S') cx.fillText('v',sx*CELL_W,(sy+1)*CELL_H);
+  else cx.fillText('^',sx*CELL_W,sy*CELL_H);
+  cx.restore();
+}
+function drawNpc(n,camX,camY){
+  const sx=Math.round(n.px-camX), sy=Math.round(n.py-camY);
+  if(sx<-1||sx>=COLS+1||sy<-2||sy>=ROWS+2) return;
+  const r=n.color[0],g=n.color[1],b=n.color[2];
+  cx.save();
+  cx.font=FONT+'px monospace';
+  cx.textBaseline='top';
+  cx.fillStyle='rgb('+r+','+g+','+b+')';
+  cx.shadowColor='rgba('+r+','+g+','+b+',0.6)';
+  cx.shadowBlur=6;
+  cx.fillText(n.name[0].toLowerCase(),sx*CELL_W,sy*CELL_H);
+  cx.shadowBlur=0;
+  cx.font='10px monospace';
+  cx.fillStyle='rgba('+r+','+g+','+b+',0.75)';
+  cx.fillText(n.name,sx*CELL_W,sy*CELL_H-13);
+  cx.restore();
+}
+function drawPlayer(camX,camY){
+  const p=S.player;
+  const sx=Math.round(p.px-camX), sy=Math.round(p.py-camY);
+  cx.save();
+  cx.font=FONT+'px monospace';
+  cx.textBaseline='top';
+  cx.fillStyle='#37e6ff';
+  cx.shadowColor='rgba(55,230,255,0.85)';
+  cx.shadowBlur=11;
+  cx.fillText('@',sx*CELL_W,sy*CELL_H);
+  cx.restore();
+}
+function drawRain(){
+  cx.save();
+  cx.font=FONT+'px monospace';
+  cx.textBaseline='top';
+  cx.fillStyle='rgba(160,200,235,0.32)';
+  for(const d of S.rain){
+    const sx=d.x|0, sy=d.y|0;
+    if(sx<0||sx>=COLS||sy<0||sy>=ROWS) continue;
+    cx.fillText(d.len>1?'|':'\'' ,sx*CELL_W,sy*CELL_H);
+  }
+  cx.restore();
+}
+
+/* ---------- main loop ---------- */
+let lastTime=0;
+function loop(t){
+  const dt=Math.min(0.05,(t-lastTime)/1000||0);
+  lastTime=t;
+  S.time+=dt;
+  updatePlayer(dt);
+  for(const n of S.npcs) updateNPC(n,dt);
+  for(const v of S.vehicles) updateVehicle(v,dt);
+  updateRain(dt);
+  updateCamera();
+  updatePrompt();
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* ---------- init ---------- */
+loadMap('city');
+setDistrict();
+setObjective();
+updateHUD();
+log('Rain never stops in Neo-Kowloon.','dim');
+log('Find Rin at the market. (H for help)','sys');
+requestAnimationFrame(loop);
+// debug hook (also handy for console tinkering)
+window.NR=S; window.NRM=MAPS;
+</script>
+</body>
+</html>
