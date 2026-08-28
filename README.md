@@ -15,6 +15,7 @@ Each model receives the prompt in [`sidescroller prompt.txt`](./sidescroller%20p
 | Grok-4.5 | [`Grok-4.5.html`](./Grok-4.5.html) |
 | Grok-4.6 | [`Grok-4.6.html`](./Grok-4.6.html) |
 | North-Mini | [`North-Mini.html`](./North-Mini.html) |
+| Qwen3.8-Flash-Next | [`qwen3.8-flash-next.html`](./qwen3.8-flash-next.html) |
 
 ## Run a game
 
