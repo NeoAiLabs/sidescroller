@@ -10,12 +10,22 @@ Each model receives the prompt in [`sidescroller prompt.txt`](./sidescroller%20p
 | --- | --- |
 | GPT-5.6Sol | [`GPT-5.6Sol.html`](./GPT-5.6Sol.html) |
 | Ling-3.0-Flash | [`Ling-3.0-Flash.html`](./Ling-3.0-Flash.html) |
-| Deepseekv4-Flash | [`Deepseekv4-Flash.html`](./Deepseekv4-Flash.html) |
+| Deepseekv4-Flash | [`Deepseekv4-flash.html`](./Deepseekv4-flash.html) |
 | Deepseekv4-Flash (new) | [`DSV4-new.html`](./DSV4-new.html) |
 | Grok-4.5 | [`Grok-4.5.html`](./Grok-4.5.html) |
 | Grok-4.6 | [`Grok-4.6.html`](./Grok-4.6.html) |
 | North-Mini | [`North-Mini.html`](./North-Mini.html) |
 | Qwen3.8-Flash-Next | [`qwen3.8-flash-next.html`](./qwen3.8-flash-next.html) |
+| Qwen3.8-Flash-Next (vLLM) | [`vllm-qwen3.8-flash-next.html`](./vllm-qwen3.8-flash-next.html) |
+| Qwen3.8-27B-NVFP4 | [`Qwen3.8-27B-NVFP4.html`](./Qwen3.8-27B-NVFP4.html) |
+| LongCat | [`longcat.html`](./longcat.html) |
+| Claude Fable 5.1 | [`claude-fable-5.1.html`](./claude-fable-5.1.html) |
+| HY 4 Preview | [`hy4-preview.html`](./hy4-preview.html) |
+| Muse Spark 1.2 Contributor Free | [`muse-spark-1.2-contributor-free.html`](./muse-spark-1.2-contributor-free.html) |
+| Muse Spark 1.3 Contributor Free | [`muse-spark-1.3-contributor-free.html`](./muse-spark-1.3-contributor-free.html) |
+| GPT-6 Astra | [`gpt-6-astra.html`](./gpt-6-astra.html) |
+
+The repository also includes [`index.html`](./index.html), a separate single-file cyberpunk game titled **NEON RAIN**.
 
 ## Run a game
 
@@ -46,6 +56,7 @@ Model filenames should be short, filesystem-safe, and identify the exact model v
 ```text
 .
 ├── README.md                  # Project overview and benchmark method
+├── index.html                 # Standalone NEON RAIN cyberpunk game
 ├── sidescroller prompt.txt    # Canonical prompt sent to every model
 └── <model-name>.html          # One-shot result from a tested model
 ```
