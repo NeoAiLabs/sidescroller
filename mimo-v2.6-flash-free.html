@@ -1,0 +1,2403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mimo-v2.6-flash-free</title>
+<style>
+  /* ---------- retro-tech CRT page chrome ---------- */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #05020f;
+    font-family: "Courier New", Courier, monospace;
+    user-select: none;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; }
+
+  /* scanline + vignette overlay */
+  #crt {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.14) 0 1px, transparent 1px 3px),
+      radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+    mix-blend-mode: multiply;
+  }
+
+  /* ---------- full-screen start / end panels ---------- */
+  .screen {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(4, 2, 18, 0.82);
+    backdrop-filter: blur(2px);
+  }
+  .screen.hidden { display: none; }
+  .panel {
+    width: min(680px, 92vw);
+    padding: 28px 32px;
+    border: 2px solid #22f7ff;
+    background: linear-gradient(160deg, rgba(10,6,40,0.95), rgba(30,4,50,0.95));
+    box-shadow: 0 0 24px #22f7ff55, inset 0 0 40px #ff2fd022;
+    text-align: center;
+    color: #d8faff;
+  }
+  .tag {
+    font-size: 12px; letter-spacing: 4px; color: #ff2fd0;
+    margin-bottom: 6px;
+  }
+  .panel h1 {
+    font-size: clamp(28px, 6vw, 48px);
+    letter-spacing: 6px;
+    color: #22f7ff;
+    text-shadow: 0 0 10px #22f7ff, 3px 3px 0 #ff2fd0;
+    margin-bottom: 4px;
+  }
+  .panel h2 {
+    font-size: clamp(14px, 2.5vw, 18px);
+    font-weight: normal; letter-spacing: 3px;
+    color: #ffe94a; margin-bottom: 16px;
+  }
+  .lore {
+    font-size: 14px; line-height: 1.55; color: #b9c6ff;
+    margin-bottom: 18px;
+  }
+  .hl { color: #ff5a5a; text-shadow: 0 0 8px #ff5a5a; }
+  .controls {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    font-size: 13px; color: #9fffe8; margin-bottom: 20px;
+    text-align: left;
+  }
+  .controls div { padding: 6px 8px; border: 1px dashed #2f7dff66; }
+  kbd {
+    display: inline-block; min-width: 22px; padding: 2px 6px;
+    margin: 0 2px; border: 1px solid #22f7ff; border-bottom-width: 3px;
+    background: #0a1030; color: #22f7ff; font-family: inherit;
+    font-size: 12px; text-align: center;
+  }
+  button {
+    font-family: inherit; font-size: 18px; letter-spacing: 3px;
+    padding: 12px 28px; margin-top: 4px; cursor: pointer;
+    color: #05020f; background: #ffe94a;
+    border: 3px solid #fff; box-shadow: 4px 4px 0 #ff2fd0;
+    transition: transform 0.08s;
+  }
+  button:hover { background: #22f7ff; transform: translate(-1px,-1px); }
+  button:active { transform: translate(2px,2px); box-shadow: 1px 1px 0 #ff2fd0; }
+  .hint { margin-top: 12px; font-size: 12px; color: #7f88c9; }
+  .stats {
+    display: flex; justify-content: center; gap: 22px; flex-wrap: wrap;
+    font-size: 15px; color: #ffe94a; margin: 10px 0 16px;
+  }
+  #endMsg { font-size: 14px; color: #b9c6ff; line-height: 1.5; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="crt"></div>
+
+<!-- Start screen -->
+<div id="startScreen" class="screen">
+  <div class="panel">
+    <div class="tag">HERMES_AGENT.EXE // SESSION 0x26FF</div>
+    <h1>HERMES AGENT</h1>
+    <h2>mimo-v2.6-flash-free · DIGITAL SHORELINE</h2>
+    <p class="lore">
+      A tiny hooded terminal explorer washes up on a chaotic digital shoreline where
+      beach, server rooms and neon terminals have melted together. Zap corrupted
+      shellfish, rogue terminals and floating error bubbles, bank tokens, hit the
+      checkpoints, and de-frag the final process:
+      the disfigured <span class="hl">CYBER-LOBSTER</span>.
+    </p>
+    <div class="controls">
+      <div><kbd>A</kbd><kbd>D</kbd> / <kbd>&larr;</kbd><kbd>&rarr;</kbd> &mdash; move</div>
+      <div><kbd>Space</kbd> / <kbd>W</kbd> / <kbd>&uarr;</kbd> &mdash; jump</div>
+      <div><kbd>J</kbd> / left click &mdash; prompt bolts</div>
+      <div><kbd>R</kbd> &mdash; restart after win / game over</div>
+    </div>
+    <button id="startBtn">&#9656; BOOT SESSION</button>
+    <p class="hint">Press <kbd>Enter</kbd> or <kbd>Space</kbd> to start</p>
+  </div>
+</div>
+
+<!-- Win / Game over screen -->
+<div id="endScreen" class="screen hidden">
+  <div class="panel">
+    <div class="tag" id="endTag">SESSION_END</div>
+    <h1 id="endTitle">SYSTEM HALTED</h1>
+    <p id="endMsg"></p>
+    <div class="stats" id="endStats"></div>
+    <button id="restartBtn">&#9656; REBOOT [R]</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================================
+   mimo-v2.6-flash-free — single-file HTML5 side-scroller
+   A hooded Hermes Agent crosses a digital shoreline to fight a cyber-lobster.
+   Everything (art, sfx, level) is procedural. No external assets.
+   ========================================================================== */
+
+// ----------------------------- CANVAS / RESIZE -----------------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+let VW = 960, VH = 540; // view size in device-independent pixels
+
+function resize() {
+  VW = window.innerWidth;
+  VH = window.innerHeight;
+  // keep backing store crisp on HiDPI displays (capped for perf)
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.floor(VW * dpr);
+  canvas.height = Math.floor(VH * dpr);
+  canvas.style.width = VW + 'px';
+  canvas.style.height = VH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ----------------------------- GAME CONSTANTS ------------------------------
+const GRAVITY   = 0.62;   // px / frame^2 (frame ≈ 1/60s, dt-scaled)
+const MOVE_SPD  = 4.3;    // horizontal run speed
+const JUMP_VEL  = 13.6;   // initial jump impulse
+const MAX_FALL  = 16;     // terminal velocity
+const WORLD_W   = 9000;   // total level width
+const WORLD_H   = 900;    // virtual world height
+const GROUND_Y  = 560;    // top surface of the ground
+const ARENA_L   = 7050;   // boss arena left gate
+const ARENA_R   = 8920;   // boss arena right edge
+const PIT_KILL  = 720;    // y below this = fall into the void
+
+// Biomes drive palette + mid-parallax decoration style
+function biomeAt(x) {
+  if (x < 2400) return 'beach';
+  if (x < 5000) return 'server';
+  if (x < 7000) return 'terminal';
+  return 'boss';
+}
+
+// ----------------------------- SMALL UTILITIES -----------------------------
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp  = (a, b, t) => a + (b - a) * t;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const irand = (a, b) => Math.floor(rand(a, b + 1));
+const sign  = v => (v < 0 ? -1 : 1);
+
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// rounded-rect path helper (works on older browsers too)
+function rr(x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+function pointSolid(x, y) {
+  for (let i = 0; i < solids.length; i++) {
+    const s = solids[i];
+    if (s.hidden) continue;
+    if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) return true;
+  }
+  return false;
+}
+
+// ----------------------------- TINY WEBAUDIO SFX ---------------------------
+// (generated oscillator blips — no audio files)
+let AC = null;
+function ensureAudio() {
+  if (AC) return;
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); }
+  catch (e) { AC = null; }
+}
+const SFX_MAP = {
+  jump:  ['square',   320, 720, 0.12, 0.07],
+  shoot: ['square',   980, 420, 0.07, 0.05],
+  coin:  ['triangle', 820, 1500, 0.12, 0.09],
+  hurt:  ['sawtooth', 240,  90, 0.22, 0.11],
+  hit:   ['square',   160,  60, 0.14, 0.09],
+  kill:  ['sawtooth', 420, 120, 0.18, 0.08],
+  cp:    ['sine',     520, 980, 0.28, 0.09],
+  boom:  ['sawtooth', 110,  35, 0.45, 0.16],
+  win:   ['square',   440, 1320, 0.55, 0.11],
+};
+function sfx(kind) {
+  if (!AC) return;
+  const m = SFX_MAP[kind];
+  if (!m) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.connect(g); g.connect(AC.destination);
+  o.type = m[0];
+  o.frequency.setValueAtTime(m[1], t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(20, m[2]), t + m[3]);
+  g.gain.setValueAtTime(m[4], t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + m[3]);
+  o.start(t);
+  o.stop(t + m[3] + 0.03);
+}
+
+// ----------------------------- INPUT ---------------------------------------
+const keys = Object.create(null);
+let mouseDown = false;
+let jumpQueued = false;   // edge-triggered jump buffer
+let state = 'start';      // start | playing | gameover | win
+
+const PREVENT = new Set([
+  'ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyW','KeyA','KeyS','KeyD'
+]);
+
+window.addEventListener('keydown', (e) => {
+  if (PREVENT.has(e.code)) e.preventDefault();
+  ensureAudio();
+  // first press on menus
+  if (state === 'start' && (e.code === 'Enter' || e.code === 'Space')) {
+    startGame();
+    return;
+  }
+  if ((state === 'gameover' || state === 'win') && e.code === 'KeyR') {
+    startGame();
+    return;
+  }
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+    if (!keys[e.code]) jumpQueued = true; // only on fresh press
+  }
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+  // variable jump height: releasing jump cuts upward velocity
+  if ((e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') &&
+      state === 'playing' && player && player.vy < -4.5) {
+    player.vy *= 0.45;
+  }
+});
+window.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  ensureAudio();
+  mouseDown = true;
+});
+window.addEventListener('mouseup', (e) => { if (e.button === 0) mouseDown = false; });
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', startGame);
+
+// ----------------------------- GAME STATE ----------------------------------
+let player, solids, enemies, tokens, checkpoints, bolts, enemyShots, particles;
+let boss, cam, decorFar, decorMid, GAPS, arenaGate;
+let score, tokenCount, respawnX, elapsed, winTimer, deathTimer, shake;
+
+// static enemy / token spawn templates (rebuilt on every reset)
+const ENEMY_SPAWNS = [
+  // -- beach section --
+  { t:'shell',  x: 520 },
+  { t:'bubble', x: 780,  y: 380 },
+  { t:'shell',  x: 1120 },
+  { t:'bubble', x: 1450, y: 340 },
+  { t:'term',   x: 1700 },
+  { t:'shell',  x: 1950 },
+  { t:'bubble', x: 2150, y: 300 },
+  { t:'term',   x: 2320 },
+  // -- server room section --
+  { t:'shell',  x: 2620 },
+  { t:'term',   x: 3000 },
+  { t:'bubble', x: 3200, y: 360 },
+  { t:'shell',  x: 3450 },
+  { t:'term',   x: 3700 },
+  { t:'bubble', x: 3950, y: 320 },
+  { t:'shell',  x: 4120 },
+  { t:'term',   x: 4550 },
+  { t:'bubble', x: 4750, y: 380 },
+  // -- terminal canyon section --
+  { t:'shell',  x: 4900 },
+  { t:'term',   x: 5200 },
+  { t:'bubble', x: 5400, y: 340 },
+  { t:'shell',  x: 5550 },
+  { t:'bubble', x: 5900, y: 400 },
+  { t:'term',   x: 6100 },
+  { t:'shell',  x: 6350 },
+  { t:'term',   x: 6600 },
+  { t:'bubble', x: 6750, y: 320 },
+  // -- approach to arena --
+  { t:'shell',  x: 6920 },
+];
+
+const TOKEN_SPAWNS = [
+  // beach arc
+  [300,500],[360,500],[420,500],[640,385],[700,385],[860,500],
+  [1240,390],[1300,390],[1480,500],[1620,400],[1680,400],[1900,500],
+  [2050,300],[2110,300],[2280,500],
+  // server room
+  [2560,500],[2760,430],[2820,430],[3050,500],[3280,400],[3340,400],
+  [3560,500],[3780,420],[3840,420],[4060,500],[4300,450],[4360,450],
+  [4620,500],[4820,380],[4880,380],
+  // terminal canyon
+  [5100,500],[5320,440],[5380,440],[5580,500],[5820,400],[5880,400],
+  [6060,500],[6280,450],[6340,450],[6550,500],[6780,420],[6840,420],
+  // arena pockets
+  [7300,470],[7600,500],[8000,470],[8400,500],
+];
+
+const CHECKPOINT_SPAWNS = [1480, 3100, 5100, 6850];
+
+// gaps in the ground (water / void pits)
+const GAP_DEFS = [
+  [1200, 1360],
+  [2700, 2880],
+  [4200, 4400],
+  [5600, 5750],
+];
+
+// ----------------------------- LEVEL BUILD ---------------------------------
+function buildLevel() {
+  solids = [];
+  GAPS = GAP_DEFS.map(g => g.slice());
+
+  // ground segments between gaps (solid slabs hanging down)
+  let cursor = 0;
+  for (const g of GAPS) {
+    if (g[0] > cursor) {
+      solids.push({ x: cursor, y: GROUND_Y, w: g[0] - cursor, h: 420, kind: 'ground' });
+    }
+    cursor = g[1];
+  }
+  if (cursor < WORLD_W) {
+    solids.push({ x: cursor, y: GROUND_Y, w: WORLD_W - cursor, h: 420, kind: 'ground' });
+  }
+
+  // floating platforms (mostly reachable with a ~140px jump)
+  const plats = [
+    // beach
+    {x:300,y:470,w:130,h:16},{x:600,y:425,w:130,h:16},{x:860,y:450,w:110,h:16},
+    {x:1240,y:420,w:110,h:16}, // over first pit
+    {x:1600,y:430,w:140,h:16},{x:1900,y:450,w:120,h:16},
+    {x:2030,y:330,w:130,h:16},
+    // server
+    {x:2540,y:470,w:120,h:16},{x:2760,y:460,w:100,h:16}, // over 2nd pit
+    {x:3260,y:430,w:140,h:16},{x:3560,y:450,w:130,h:16},
+    {x:3780,y:450,w:120,h:16},{x:4060,y:470,w:110,h:16},
+    {x:4260,y:490,w:90,h:16},   // stepping stone over 3rd pit
+    {x:4600,y:430,w:140,h:16},{x:4820,y:410,w:120,h:16},
+    // terminal
+    {x:5080,y:470,w:130,h:16},{x:5320,y:470,w:120,h:16},
+    {x:5620,y:470,w:100,h:16},  // over 4th pit
+    {x:5820,y:430,w:130,h:16},{x:6060,y:470,w:120,h:16},
+    {x:6280,y:480,w:120,h:16},{x:6560,y:440,w:140,h:16},
+    {x:6780,y:450,w:120,h:16},
+    // boss arena side ledges
+    {x:7300,y:470,w:150,h:16},{x:8400,y:470,w:150,h:16},
+  ];
+  for (const p of plats) solids.push({ x:p.x, y:p.y, w:p.w, h:p.h, kind:'plat' });
+
+  // arena left gate (activated when the fight starts)
+  arenaGate = { x: ARENA_L - 24, y: 0, w: 24, h: WORLD_H, kind:'gate', hidden:true };
+  solids.push(arenaGate);
+
+  // enemies
+  enemies = ENEMY_SPAWNS.map(s => {
+    if (s.t === 'shell') {
+      return { type:'shell', x:s.x, y:GROUND_Y - 26, w:36, h:26,
+               vx:0, vy:0, dir: Math.random()<0.5?-1:1, hp:2, speed:1.05,
+               onGround:false, t:rand(0,100), dead:false, flash:0 };
+    }
+    if (s.t === 'term') {
+      return { type:'term', x:s.x, y:GROUND_Y - 40, w:32, h:40,
+               vx:0, vy:0, dir: Math.random()<0.5?-1:1, hp:2, speed:0.55,
+               onGround:false, t:rand(0,100), fireCd:rand(60,140),
+               home:s.x, dead:false, flash:0 };
+    }
+    // floating error bubble
+    return { type:'bubble', x:s.x, y:s.y, w:30, h:30,
+             vx:0, vy:0, dir: Math.random()<0.5?-1:1, hp:1, speed:0.75,
+             baseY:s.y, minX:s.x-140, maxX:s.x+140, t:rand(0,100),
+             dead:false, flash:0 };
+  });
+
+  // collectible tokens
+  tokens = TOKEN_SPAWNS.map(([x,y]) => ({ x, y, r:11, got:false, t:rand(0,60) }));
+
+  // checkpoints (vertical beams)
+  checkpoints = CHECKPOINT_SPAWNS.map(x => ({
+    x, y: GROUND_Y - 90, w: 18, h: 90, active:false
+  }));
+
+  // parallax decor strips
+  decorFar = [];
+  for (let x = -600; x < WORLD_W + 5000; x += rand(150, 340)) {
+    decorFar.push({ x, h: rand(60, 190), w: rand(50, 140), seed: Math.random() });
+  }
+  decorMid = [];
+  for (let x = -400; x < WORLD_W + 4000; x += rand(220, 420)) {
+    decorMid.push({ x, h: rand(110, 230), seed: Math.random(), kind: irand(0,2) });
+  }
+}
+
+// ----------------------------- ENTITY SPAWNERS -----------------------------
+function spawnParticles(x, y, n, colors, spread, life) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(0.5, spread);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - rand(0, 1.5),
+      life: rand(life * 0.5, life),
+      max: life,
+      size: rand(2, 5),
+      color: colors[irand(0, colors.length - 1)],
+      grav: rand(0.04, 0.16),
+    });
+  }
+}
+
+// player fires a glowing ">_" prompt bolt
+function shootBolt() {
+  const dir = player.facing;
+  bolts.push({
+    x: player.x + (dir > 0 ? player.w - 2 : -12),
+    y: player.y + player.h * 0.38,
+    w: 14, h: 7,
+    vx: dir * 11,
+    life: 70,
+    dir,
+  });
+  player.fireCd = 13;
+  player.recoil = 4;
+  sfx('shoot');
+  spawnParticles(player.x + player.w/2 + dir*14, player.y + 14, 3,
+                 ['#22f7ff', '#ffffff'], 1.5, 14);
+}
+
+// boss attack: rain of falling glitch bubbles
+function spawnFallingBubble(bx) {
+  enemyShots.push({
+    type: 'gbubble',
+    x: clamp(bx, ARENA_L + 40, ARENA_R - 40),
+    y: boss.y - rand(120, 320),
+    r: rand(14, 22),
+    vx: rand(-0.6, 0.6),
+    vy: rand(0.5, 1.6),
+    life: 240,
+    t: rand(0, 100),
+    label: ['ERR','404','GLITCH','XX','?'][irand(0,4)],
+  });
+}
+
+// rogue terminal fires a data packet at the player
+function spawnPacket(e) {
+  const dx = (player.x + player.w/2) - (e.x + e.w/2);
+  const dy = (player.y + player.h/2) - (e.y + 12);
+  const d = Math.hypot(dx, dy) || 1;
+  enemyShots.push({
+    type: 'packet',
+    x: e.x + e.w/2 - 5,
+    y: e.y + 12,
+    w: 10, h: 10,
+    vx: (dx / d) * 4.2,
+    vy: (dy / d) * 4.2,
+    life: 140,
+    t: 0,
+  });
+}
+
+// ----------------------------- RESET / START -------------------------------
+function resetGame() {
+  score = 0;
+  tokenCount = 0;
+  elapsed = 0;
+  winTimer = -1;
+  deathTimer = -1;
+  shake = 0;
+  respawnX = 80;
+
+  buildLevel();
+
+  player = {
+    x: 80, y: GROUND_Y - 40,
+    w: 26, h: 36,
+    vx: 0, vy: 0,
+    onGround: false,
+    facing: 1,
+    hp: 5, maxHp: 5,
+    inv: 0,           // i-frame counter after taking a hit
+    fireCd: 0,
+    coyote: 0,        // grace period for jumping after leaving a ledge
+    anim: 0,
+    recoil: 0,
+    dead: false,
+  };
+
+  bolts = [];
+  enemyShots = [];
+  particles = [];
+
+  // final boss: the disfigured cyber-lobster
+  boss = {
+    x: ARENA_R - 320, y: GROUND_Y - 150,
+    w: 220, h: 150,
+    vx: 0, vy: 0,
+    dir: -1,
+    hp: 36, maxHp: 36,
+    active: false,
+    dead: false,
+    iframe: 0,
+    flash: 0,
+    glitch: 0,
+    atkCd: 160,
+    lungeT: 0,
+    walkT: 0,
+    claw: 0,          // claw open/close phase
+    saw: 0,           // saw spin
+    onGround: false,
+    deathT: 0,
+    eyeFlicker: 0,
+  };
+
+  cam = { x: 0, y: 0 };
+  arenaGate.hidden = true;
+}
+
+function startGame() {
+  ensureAudio();
+  resetGame();
+  state = 'playing';
+  jumpQueued = false;
+  mouseDown = false;
+  Object.keys(keys).forEach(k => { keys[k] = false; });
+  document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('endScreen').classList.add('hidden');
+}
+
+// swap in the win / game-over panel
+function showEnd(won) {
+  state = won ? 'win' : 'gameover';
+  const title = document.getElementById('endTitle');
+  const tag = document.getElementById('endTag');
+  const msg = document.getElementById('endMsg');
+  const stats = document.getElementById('endStats');
+  if (won) {
+    tag.textContent = 'PROCESS_TERMINATED';
+    title.textContent = 'LOBSTER DE-FRAMED!';
+    title.style.color = '#22f7ff';
+    msg.textContent =
+      'The cyber-lobster shells shatter into harmless packets. ' +
+      'The digital shoreline reboots in peace. Nice work, Hermes Agent.';
+    sfx('win');
+  } else {
+    tag.textContent = 'CONNECTION_LOST';
+    title.textContent = 'SEGMENTATION FAULT';
+    title.style.color = '#ff5a5a';
+    msg.textContent =
+      'Your hooded explorer crashed into the void. ' +
+      'The lobster keeps clicking its mismatched claws... for now.';
+  }
+  stats.innerHTML =
+    '<span>SCORE ' + String(score).padStart(6, '0') + '</span>' +
+    '<span>TOKENS ' + tokenCount + '</span>' +
+    '<span>TIME ' + Math.floor(elapsed / 60) + 's</span>';
+  document.getElementById('endScreen').classList.remove('hidden');
+}
+
+// ----------------------------- PHYSICS HELPERS -----------------------------
+// Axis-separated AABB move against all solids.
+function moveCollide(e, dt) {
+  // X axis
+  e.x += e.vx * dt;
+  for (const s of solids) {
+    if (s.hidden) continue;
+    if (aabb(e, s)) {
+      if (e.vx > 0) e.x = s.x - e.w;
+      else if (e.vx < 0) e.x = s.x + s.w;
+      e.vx = 0;
+    }
+  }
+  // Y axis
+  e.y += e.vy * dt;
+  e.onGround = false;
+  for (const s of solids) {
+    if (s.hidden) continue;
+    if (aabb(e, s)) {
+      if (e.vy > 0) { e.y = s.y - e.h; e.vy = 0; e.onGround = true; }
+      else if (e.vy < 0) { e.y = s.y + s.h; e.vy = 0; }
+    }
+  }
+}
+
+function damagePlayer(amount, fromX) {
+  if (player.inv > 0 || player.dead || winTimer >= 0) return;
+  player.hp -= amount;
+  player.inv = 90;
+  player.vx = sign(player.x + player.w/2 - fromX) * 6;
+  player.vy = -6;
+  shake = Math.max(shake, 8);
+  sfx('hurt');
+  spawnParticles(player.x + player.w/2, player.y + player.h/2, 10,
+                 ['#ff5a5a', '#ff2fd0', '#ffffff'], 3, 24);
+  if (player.hp <= 0) {
+    player.hp = 0;
+    player.dead = true;
+    deathTimer = 70;
+    spawnParticles(player.x + player.w/2, player.y + player.h/2, 26,
+                   ['#22f7ff', '#ff2fd0', '#ffe94a', '#ffffff'], 5, 40);
+    sfx('boom');
+  }
+}
+
+// ----------------------------- UPDATE: PLAYER ------------------------------
+function updatePlayer(dt) {
+  if (player.dead) {
+    player.vy = Math.min(player.vy + GRAVITY * dt, MAX_FALL);
+    player.y += player.vy * dt;
+    return;
+  }
+
+  const freeze = winTimer >= 0; // dramatic pause during boss death
+  const left  = !freeze && (keys.ArrowLeft || keys.KeyA);
+  const right = !freeze && (keys.ArrowRight || keys.KeyD);
+
+  // horizontal movement
+  let target = 0;
+  if (left && !right) target = -MOVE_SPD;
+  if (right && !left) target = MOVE_SPD;
+  if (target !== 0) {
+    player.vx = target;
+    player.facing = target > 0 ? 1 : -1;
+    // running dust
+    if (player.onGround && Math.random() < 0.18) {
+      spawnParticles(player.x + player.w/2 - player.facing*8, player.y + player.h,
+                     1, ['#d9b27a', '#8fefff', '#ffffff'], 1, 12);
+    }
+  } else {
+    player.vx *= Math.pow(player.onGround ? 0.65 : 0.92, dt);
+    if (Math.abs(player.vx) < 0.05) player.vx = 0;
+  }
+
+  // gravity
+  player.vy = Math.min(player.vy + GRAVITY * dt, MAX_FALL);
+
+  // jump (edge buffered + coyote time)
+  player.coyote = player.onGround ? 8 : player.coyote - dt;
+  if (jumpQueued) {
+    if (player.coyote > 0 && !freeze) {
+      player.vy = -JUMP_VEL;
+      player.coyote = 0;
+      player.onGround = false;
+      sfx('jump');
+      spawnParticles(player.x + player.w/2, player.y + player.h, 6,
+                     ['#d9b27a', '#22f7ff', '#ffffff'], 2, 14);
+    }
+    jumpQueued = false;
+  }
+
+  moveCollide(player, dt);
+
+  // shooting prompt bolts (J key or left mouse)
+  player.fireCd -= dt;
+  if (!freeze && (keys.KeyJ || mouseDown) && player.fireCd <= 0) shootBolt();
+  if (player.recoil > 0) player.recoil -= dt * 2;
+
+  // timers
+  if (player.inv > 0) player.inv -= dt;
+  player.anim += dt * (Math.abs(player.vx) * 0.14 + 0.05);
+
+  // pit fall → lose a heart and respawn at last checkpoint
+  if (player.y > PIT_KILL) {
+    player.hp -= 1;
+    shake = 10;
+    sfx('hurt');
+    if (player.hp <= 0) {
+      player.hp = 0;
+      player.dead = true;
+      deathTimer = 40;
+    } else {
+      player.x = respawnX;
+      player.y = GROUND_Y - 120;
+      player.vx = 0;
+      player.vy = 0;
+      player.inv = 100;
+      spawnParticles(player.x + player.w/2, player.y + 20, 14,
+                     ['#22f7ff', '#ffffff', '#ffe94a'], 3, 26);
+    }
+  }
+
+  // enter boss arena → lock the gate and wake the lobster
+  if (!boss.active && player.x > ARENA_L + 60) {
+    boss.active = true;
+    arenaGate.hidden = false;
+    shake = 12;
+    sfx('boom');
+    spawnParticles(ARENA_L, GROUND_Y - 200, 20,
+                   ['#ff2fd0', '#22f7ff', '#ffe94a'], 4, 30);
+  }
+}
+
+// ----------------------------- UPDATE: ENEMIES -----------------------------
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    if (e.dead) continue;
+    if (e.flash > 0) e.flash -= dt;
+    e.t += dt;
+
+    if (e.type === 'bubble') {
+      // sine-wave drift, floats freely (no gravity)
+      e.x += e.dir * e.speed * dt;
+      e.y = e.baseY + Math.sin(e.t * 0.055) * 34;
+      if (e.x < e.minX) { e.x = e.minX; e.dir = 1; }
+      if (e.x > e.maxX) { e.x = e.maxX; e.dir = -1; }
+    } else {
+      // grounded walkers: shells patrol, terminals stay near home base
+      if (e.type === 'term') {
+        if (Math.abs(e.x - e.home) > 90) e.dir = sign(e.home - e.x);
+        // fire a data packet when the player is close and roughly level
+        e.fireCd -= dt;
+        const dx = Math.abs((player.x + 13) - (e.x + 16));
+        const dy = Math.abs((player.y + 18) - (e.y + 12));
+        if (e.fireCd <= 0 && dx < 430 && dy < 160 && !player.dead) {
+          spawnPacket(e);
+          e.fireCd = irand(100, 160);
+        }
+      }
+      e.vx = e.dir * e.speed;
+      e.vy = Math.min(e.vy + GRAVITY * dt, MAX_FALL);
+      moveCollide(e, dt);
+
+      // reverse at walls or ledges
+      const probeX = e.dir > 0 ? e.x + e.w + 6 : e.x - 6;
+      const probeY = e.y + e.h + 10;
+      if (e.onGround && !pointSolid(probeX, probeY)) e.dir *= -1;
+      if (e.vx === 0) e.dir *= -1;
+
+      if (e.y > PIT_KILL + 100) e.dead = true;
+    }
+
+    // contact damage
+    if (!player.dead && player.inv <= 0 && aabb(player, e)) {
+      damagePlayer(1, e.x + e.w / 2);
+    }
+  }
+}
+
+// ----------------------------- UPDATE: BOSS --------------------------------
+function updateBoss(dt) {
+  const b = boss;
+  b.claw += dt * 0.09;
+  b.saw += dt * 0.35;
+  if (b.flash > 0) b.flash -= dt;
+  if (b.glitch > 0) b.glitch -= dt;
+  if (b.iframe > 0) b.iframe -= dt;
+  if (b.eyeFlicker > 0) b.eyeFlicker -= dt;
+
+  // ambient glitch pulses while alive
+  if (b.active && !b.dead && Math.random() < 0.012 * dt) b.glitch = irand(6, 16);
+
+  if (!b.active) return;
+
+  // boss death sequence: slumps and pops into packets
+  if (b.dead) {
+    b.deathT += dt;
+    b.vy = Math.min(b.vy + GRAVITY * dt, MAX_FALL);
+    moveCollide(b, dt);
+    b.vx *= Math.pow(0.9, dt);
+    if (Math.random() < 0.35 * dt) {
+      spawnParticles(b.x + rand(0, b.w), b.y + rand(0, b.h), 8,
+                     ['#ff2fd0', '#22f7ff', '#ffe94a', '#ffffff', '#ff5a5a'],
+                     5, 36);
+      sfx('hit');
+    }
+    return;
+  }
+
+  const half = b.hp <= b.maxHp * 0.5; // enraged below 50% HP
+  const speed = half ? 1.7 : 1.15;
+
+  // face the player
+  b.dir = (player.x + player.w / 2 > b.x + b.w / 2) ? 1 : -1;
+
+  // shuffle toward player, occasionally lunging
+  if (b.lungeT > 0) {
+    b.lungeT -= dt;
+    b.vx = b.dir * (half ? 9.5 : 8);
+  } else {
+    b.walkT += dt;
+    const pause = Math.sin(b.walkT * 0.03) > 0.55; // brief stance pauses
+    b.vx = pause ? b.vx * Math.pow(0.85, dt) : b.dir * speed;
+  }
+
+  b.vy = Math.min(b.vy + GRAVITY * dt, MAX_FALL);
+  moveCollide(b, dt);
+
+  // keep inside the arena
+  if (b.x < ARENA_L + 20) { b.x = ARENA_L + 20; b.vx = 0; }
+  if (b.x + b.w > ARENA_R) { b.x = ARENA_R - b.w; b.vx = 0; }
+
+  // attack cycle: rain glitch bubbles, or claw-lunge if close
+  b.atkCd -= dt;
+  if (b.atkCd <= 0) {
+    const r = Math.random();
+    if (r < 0.62) {
+      const n = half ? 7 : 5;
+      for (let i = 0; i < n; i++) {
+        spawnFallingBubble(player.x + player.w/2 + rand(-230, 230) + i * 18);
+      }
+      b.atkCd = half ? 75 : 105;
+      b.glitch = 12;
+      shake = 6;
+      sfx('hit');
+      if (b.onGround) b.vy = -8; // little hop for flair
+    } else if (Math.abs(player.x - b.x) < 420) {
+      b.lungeT = 18;
+      b.atkCd = half ? 70 : 100;
+      sfx('hurt');
+    } else {
+      b.atkCd = 50;
+    }
+  }
+
+  // contact damage
+  if (!player.dead && aabb(player, b)) {
+    damagePlayer(1, b.x + b.w / 2);
+  }
+}
+
+// ----------------------------- UPDATE: PROJECTILES -------------------------
+function updateBolts(dt) {
+  // player prompt bolts
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    const b = bolts[i];
+    b.x += b.vx * dt;
+    b.life -= dt;
+    let gone = b.life <= 0 || b.x < cam.x - 80 || b.x > cam.x + VW + 80;
+
+    // vs enemies
+    if (!gone) {
+      for (const e of enemies) {
+        if (e.dead) continue;
+        if (aabb(b, e)) {
+          e.hp -= 1;
+          e.flash = 8;
+          gone = true;
+          spawnParticles(b.x, b.y, 6, ['#22f7ff', '#ffffff', '#ffe94a'], 2.5, 16);
+          if (e.hp <= 0) {
+            e.dead = true;
+            score += e.type === 'term' ? 200 : e.type === 'shell' ? 150 : 100;
+            sfx('kill');
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, 14,
+              e.type === 'bubble' ? ['#ff2fd0','#22f7ff','#ffffff']
+                                  : ['#ff5a5a','#ffe94a','#22f7ff','#ffffff'],
+              3.5, 28);
+          } else {
+            sfx('hit');
+          }
+          break;
+        }
+      }
+    }
+
+    // vs cyber-lobster
+    if (!gone && boss.active && !boss.dead && boss.iframe <= 0 && aabb(b, boss)) {
+      gone = true;
+      boss.hp -= 1;
+      boss.iframe = 5;
+      boss.flash = 8;
+      boss.glitch = 14;
+      score += 30;
+      shake = Math.max(shake, 4);
+      sfx('hit');
+      spawnParticles(b.x, b.y, 8, ['#ff2fd0', '#22f7ff', '#ffffff'], 3, 20);
+      if (boss.hp <= 0) {
+        boss.hp = 0;
+        boss.dead = true;
+        winTimer = 110;
+        score += 2000;
+        shake = 16;
+        arenaGate.hidden = true;
+        sfx('boom');
+        spawnParticles(boss.x + boss.w/2, boss.y + boss.h/2, 40,
+                       ['#ff2fd0','#22f7ff','#ffe94a','#ff5a5a','#ffffff'],
+                       6, 50);
+      }
+    }
+
+    // bolts fizzle on solids
+    if (!gone && pointSolid(b.x + b.w/2, b.y + b.h/2)) {
+      gone = true;
+      spawnParticles(b.x, b.y, 4, ['#22f7ff', '#ffffff'], 1.5, 10);
+    }
+
+    if (gone) bolts.splice(i, 1);
+  }
+
+  // enemy projectiles (glitch bubbles + data packets)
+  for (let i = enemyShots.length - 1; i >= 0; i--) {
+    const s = enemyShots[i];
+    s.life -= dt;
+    s.t += dt;
+
+    if (s.type === 'gbubble') {
+      s.vy = Math.min(s.vy + 0.10 * dt, 7);
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      // splat on ground
+      if (pointSolid(s.x, s.y + s.r) || s.life <= 0) {
+        spawnParticles(s.x, s.y, 8, ['#ff2fd0','#22f7ff','#ff5a5a'], 2.5, 18);
+        enemyShots.splice(i, 1);
+        continue;
+      }
+      // circle-vs-rect hit on player
+      if (!player.dead &&
+          player.x < s.x + s.r && player.x + player.w > s.x - s.r &&
+          player.y < s.y + s.r && player.y + player.h > s.y - s.r) {
+        damagePlayer(1, s.x);
+        spawnParticles(s.x, s.y, 8, ['#ff2fd0','#ffffff'], 2.5, 18);
+        enemyShots.splice(i, 1);
+        continue;
+      }
+    } else {
+      // straight-flying data packets from rogue terminals
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      if (s.life <= 0 || pointSolid(s.x + 5, s.y + 5)) {
+        spawnParticles(s.x, s.y, 4, ['#ff5a5a','#ffe94a'], 1.5, 12);
+        enemyShots.splice(i, 1);
+        continue;
+      }
+      if (!player.dead && aabb({ x:s.x, y:s.y, w:s.w, h:s.h }, player)) {
+        damagePlayer(1, s.x);
+        spawnParticles(s.x, s.y, 6, ['#ff5a5a','#ffffff'], 2, 14);
+        enemyShots.splice(i, 1);
+        continue;
+      }
+    }
+
+    // despawn far off camera
+    if (s.x < cam.x - 200 || s.x > cam.x + VW + 200) enemyShots.splice(i, 1);
+  }
+}
+
+// ----------------------------- UPDATE: PICKUPS / WORLD ---------------------
+function updatePickups(dt) {
+  // tokens
+  for (const t of tokens) {
+    if (t.got) continue;
+    t.t += dt;
+    const dx = (player.x + player.w/2) - t.x;
+    const dy = (player.y + player.h/2) - t.y;
+    if (!player.dead && dx*dx + dy*dy < 26*26) {
+      t.got = true;
+      tokenCount += 1;
+      score += 50;
+      sfx('coin');
+      spawnParticles(t.x, t.y, 8, ['#ffe94a', '#ffffff', '#22f7ff'], 2.5, 18);
+    }
+  }
+
+  // checkpoints: crossing the beam saves progress + heals 1
+  for (const cp of checkpoints) {
+    if (cp.active) continue;
+    if (player.x + player.w > cp.x) {
+      cp.active = true;
+      respawnX = cp.x + 30;
+      score += 100;
+      if (player.hp < player.maxHp) player.hp += 1;
+      sfx('cp');
+      spawnParticles(cp.x + 9, cp.y + 20, 16,
+                     ['#22f7ff', '#9fffe8', '#ffffff'], 3, 30);
+    }
+  }
+
+  // particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    p.vy += p.grav * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= Math.pow(0.98, dt);
+  }
+}
+
+// ----------------------------- CAMERA --------------------------------------
+function updateCamera(dt) {
+  let tx = player.x + player.w / 2 - VW / 2;
+  let ty = player.y + player.h / 2 - VH / 2;
+
+  // once the boss fight starts, keep the view inside the arena
+  if (boss.active) {
+    const minX = ARENA_L - 80;
+    const maxX = ARENA_R + 40 - VW;
+    if (maxX > minX) tx = clamp(tx, minX, maxX);
+    else tx = (minX + maxX) / 2;
+  }
+
+  tx = clamp(tx, 0, Math.max(0, WORLD_W - VW));
+  ty = clamp(ty, 0, Math.max(0, WORLD_H - VH));
+
+  // soft follow
+  cam.x = lerp(cam.x, tx, Math.min(1, 0.12 * dt));
+  cam.y = lerp(cam.y, ty, Math.min(1, 0.10 * dt));
+
+  if (shake > 0) shake = Math.max(0, shake - 0.6 * dt);
+}
+
+// ----------------------------- MASTER UPDATE -------------------------------
+function update(dt) {
+  if (state === 'start') {
+    // attract-mode: slow auto-pan of the shoreline behind the title
+    cam.x = (cam.x + 0.45 * dt) % Math.max(1, WORLD_W - VW);
+    cam.y = 180;
+    elapsed += dt;
+    return;
+  }
+
+  if (state !== 'playing') return;
+
+  elapsed += dt;
+
+  updatePlayer(dt);
+  updateEnemies(dt);
+  updateBoss(dt);
+  updateBolts(dt);
+  updatePickups(dt);
+  updateCamera(dt);
+
+  // end-of-run timers (boss explodes / player crashes)
+  if (winTimer > 0) {
+    winTimer -= dt;
+    if (winTimer <= 0) { showEnd(true); return; }
+  }
+  if (deathTimer > 0) {
+    deathTimer -= dt;
+    if (deathTimer <= 0) { showEnd(false); return; }
+  }
+}
+
+// ============================================================================
+
+//                              RENDERING
+
+// ============================================================================
+
+// ----------------------------- BACKGROUND (SKY + SUN) -----------------------
+function drawSky() {
+  // synthwave sky gradient shifts with the biome under the camera centre
+  const b = biomeAt(cam.x + VW / 2);
+  const g = ctx.createLinearGradient(0, 0, 0, VH);
+  if (b === 'beach') {
+    g.addColorStop(0, '#2a1a6e');
+    g.addColorStop(0.45, '#c4458a');
+    g.addColorStop(0.75, '#ff9a5a');
+    g.addColorStop(1, '#ffd27a');
+  } else if (b === 'server') {
+    g.addColorStop(0, '#05061a');
+    g.addColorStop(0.5, '#141b4d');
+    g.addColorStop(1, '#1d3a5c');
+  } else if (b === 'terminal') {
+    g.addColorStop(0, '#12042e');
+    g.addColorStop(0.5, '#3a0a55');
+    g.addColorStop(1, '#0d3a4a');
+  } else {
+    g.addColorStop(0, '#0a0218');
+    g.addColorStop(0.55, '#2a0530');
+    g.addColorStop(1, '#1a0530');
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, VW, VH);
+
+  // retro slitted sun (very low parallax)
+  const sunX = 760 - cam.x * 0.04;
+  const sunY = 130 - cam.y * 0.05;
+  const sunR = 90;
+  if (sunX > -sunR && sunX < VW + sunR) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+    ctx.clip();
+    const sg = ctx.createLinearGradient(0, sunY - sunR, 0, sunY + sunR);
+    sg.addColorStop(0, '#ffe94a');
+    sg.addColorStop(0.5, '#ff8a3d');
+    sg.addColorStop(1, '#ff2fd0');
+    ctx.fillStyle = sg;
+    ctx.fillRect(sunX - sunR, sunY - sunR, sunR * 2, sunR * 2);
+    // horizontal retro slits
+    ctx.fillStyle = 'rgba(20,4,40,0.55)';
+    for (let i = 0; i < 7; i++) {
+      ctx.fillRect(sunX - sunR, sunY + 8 + i * 12, sunR * 2, 3 + i);
+    }
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,233,74,0.25)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, sunR + 10, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // faint scan-grid horizon lines
+  ctx.strokeStyle = 'rgba(34,247,255,0.08)';
+  ctx.lineWidth = 1;
+  const hy = 340 - cam.y * 0.12;
+  for (let i = 0; i < 8; i++) {
+    const yy = hy + i * i * 6;
+    if (yy > VH) break;
+    ctx.beginPath();
+    ctx.moveTo(0, yy);
+    ctx.lineTo(VW, yy);
+    ctx.stroke();
+  }
+}
+
+// ----------------------------- PARALLAX LAYERS -----------------------------
+function drawParallaxFar() {
+  // distant silhouette blocks (0.18x parallax)
+  const P = 0.18;
+  const baseY = 400 - cam.y * 0.15;
+  for (const d of decorFar) {
+    const sx = d.x - cam.x * P;
+    if (sx < -220 || sx > VW + 220) continue;
+    ctx.fillStyle = 'rgba(28, 12, 70, 0.85)';
+    ctx.fillRect(sx, baseY - d.h, d.w, d.h + 240);
+    // blinking antenna light
+    if (d.seed > 0.6) {
+      ctx.fillStyle = 'rgba(255,47,208,0.7)';
+      ctx.fillRect(sx + d.w * 0.4, baseY - d.h - 24, 3, 24);
+      ctx.fillStyle = (Math.floor(elapsed / 20) + Math.floor(d.x)) % 2
+        ? '#ff2fd0' : '#22f7ff';
+      ctx.fillRect(sx + d.w * 0.4 - 2, baseY - d.h - 28, 7, 7);
+    }
+  }
+
+  // ocean horizon band with animated wave crest
+  const oy = 360 - cam.y * 0.12;
+  const band = ctx.createLinearGradient(0, oy, 0, oy + 60);
+  band.addColorStop(0, 'rgba(34,247,255,0.20)');
+  band.addColorStop(1, 'rgba(34,247,255,0)');
+  ctx.fillStyle = band;
+  ctx.fillRect(0, oy, VW, 60);
+  ctx.strokeStyle = 'rgba(159,255,232,0.35)';
+  ctx.beginPath();
+  for (let x = 0; x <= VW; x += 8) {
+    const yy = oy + Math.sin((x + cam.x * 0.2) * 0.03 + elapsed * 0.05) * 3;
+    if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+  }
+  ctx.stroke();
+}
+
+// one mid-layer decoration, style chosen by the biome under it on screen
+function drawMidDecorItem(d, sx, groundScreenY) {
+  const worldX = cam.x + sx;
+  const biome = biomeAt(worldX);
+  const h = d.h;
+
+  if (biome === 'beach') {
+    // glitchy palm tree made of cables
+    ctx.strokeStyle = '#3d2a6e';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(sx, groundScreenY);
+    ctx.quadraticCurveTo(sx + 14 * (d.seed - 0.5) * 2, groundScreenY - h * 0.6,
+                         sx + 8, groundScreenY - h);
+    ctx.stroke();
+    ctx.strokeStyle = d.seed > 0.5 ? '#2ef0b8' : '#7dff6a';
+    ctx.lineWidth = 4;
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI * 0.15 - i * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(sx + 8, groundScreenY - h);
+      ctx.lineTo(sx + 8 + Math.cos(a) * 42, groundScreenY - h + Math.sin(a) * 26);
+      ctx.stroke();
+    }
+    // coconuts / data pods
+    ctx.fillStyle = '#ffe94a';
+    ctx.beginPath(); ctx.arc(sx + 2, groundScreenY - h + 8, 5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + 16, groundScreenY - h + 10, 4, 0, 7); ctx.fill();
+  } else if (biome === 'server') {
+    // server rack with blinking LEDs
+    const w = 54;
+    ctx.fillStyle = '#101a38';
+    ctx.fillRect(sx, groundScreenY - h, w, h);
+    ctx.strokeStyle = '#2f7dff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(sx, groundScreenY - h, w, h);
+    for (let r = 0; r < Math.floor(h / 16); r++) {
+      const ly = groundScreenY - h + 8 + r * 16;
+      ctx.fillStyle = '#0a0f24';
+      ctx.fillRect(sx + 6, ly, w - 12, 10);
+      const blink = (Math.floor(elapsed / 12) + r + Math.floor(d.x)) % 3;
+      ctx.fillStyle = blink === 0 ? '#2ef0b8' : blink === 1 ? '#ff5a5a' : '#ffe94a';
+      ctx.fillRect(sx + w - 14, ly + 3, 5, 4);
+    }
+  } else {
+    // neon terminal totem
+    const w = 46;
+    ctx.fillStyle = biome === 'boss' ? '#24082e' : '#1a0a36';
+    rr(sx, groundScreenY - h, w, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = biome === 'boss' ? '#ff2fd0' : '#22f7ff';
+    ctx.lineWidth = 2;
+    rr(sx, groundScreenY - h, w, h, 6);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(34,247,255,0.15)';
+    ctx.fillRect(sx + 8, groundScreenY - h + 12, w - 16, h * 0.4);
+    ctx.fillStyle = '#9fffe8';
+    ctx.font = '10px monospace';
+    ctx.fillText(d.kind === 0 ? '>_' : d.kind === 1 ? 'RUN' : 'OK',
+                 sx + 12, groundScreenY - h + 34);
+  }
+}
+
+function drawParallaxMid() {
+  const P = 0.42;
+  const groundY = GROUND_Y - cam.y;
+  for (const d of decorMid) {
+    const sx = d.x - cam.x * P;
+    if (sx < -180 || sx > VW + 180) continue;
+    const gy = Math.min(VH + 40, groundY + 30);
+    drawMidDecorItem(d, sx, gy);
+  }
+}
+
+// ----------------------------- WORLD: GAPS / WATER -------------------------
+function drawWater() {
+  for (const gap of GAPS) {
+    const x0 = gap[0], x1 = gap[1];
+    const sx = x0 - cam.x;
+    const w = x1 - x0;
+    if (sx + w < -40 || sx > VW + 40) continue;
+    const y = GROUND_Y + 34 - cam.y;
+    // glowing void gradient
+    const gg = ctx.createLinearGradient(0, y, 0, y + 220);
+    gg.addColorStop(0, 'rgba(34,247,255,0.55)');
+    gg.addColorStop(0.4, 'rgba(255,47,208,0.35)');
+    gg.addColorStop(1, 'rgba(10,2,30,0.95)');
+    ctx.fillStyle = gg;
+    ctx.fillRect(sx, y, w, 260);
+    // animated wave caps
+    ctx.strokeStyle = '#9fffe8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= w; i += 6) {
+      const yy = y + Math.sin((i + x0) * 0.08 + elapsed * 0.12) * 4;
+      if (i === 0) ctx.moveTo(sx + i, yy); else ctx.lineTo(sx + i, yy);
+    }
+    ctx.stroke();
+    // binary rain inside the pit
+    ctx.fillStyle = 'rgba(34,247,255,0.35)';
+    ctx.font = '11px monospace';
+    for (let i = 0; i < 6; i++) {
+      const bx = sx + 8 + ((i * 37 + x0) % Math.max(10, w - 16));
+      const by = y + 20 + ((elapsed * (1.2 + i * 0.3) + i * 50) % 180);
+      ctx.fillText(i % 2 ? '0' : '1', bx, by);
+    }
+  }
+}
+
+// ----------------------------- WORLD: SOLIDS -------------------------------
+function drawSolids() {
+  for (const s of solids) {
+    if (s.hidden) continue;
+    if (s.kind === 'gate') continue; // arena gate drawn with the boss
+    const sx = s.x - cam.x;
+    if (sx + s.w < -20 || sx > VW + 20) continue;
+    const sy = s.y - cam.y;
+    const biome = biomeAt(s.x);
+
+    if (s.kind === 'ground') {
+      // biome-coloured ground slab
+      let top, body, edge;
+      if (biome === 'beach')        { top = '#ffe0a0'; body = '#d9b27a'; edge = '#ff9a5a'; }
+      else if (biome === 'server')  { top = '#3d4f7a'; body = '#1a2444'; edge = '#2f7dff'; }
+      else if (biome === 'terminal'){ top = '#5a2d7a'; body = '#2a0f44'; edge = '#ff2fd0'; }
+      else                          { top = '#4a1d55'; body = '#1c0830'; edge = '#ff5a5a'; }
+
+      ctx.fillStyle = body;
+      ctx.fillRect(sx, sy, s.w, s.h);
+      ctx.fillStyle = top;
+      ctx.fillRect(sx, sy, s.w, 12);
+      ctx.fillStyle = edge;
+      ctx.fillRect(sx, sy, s.w, 3);
+
+      // surface texture: sand dots / rack grates / circuit traces
+      if (biome === 'beach') {
+        ctx.fillStyle = 'rgba(0,0,0,0.10)';
+        for (let i = 0; i < s.w; i += 26) {
+          ctx.fillRect(sx + i + (s.x % 26), sy + 22 + ((i * 7) % 30), 3, 3);
+        }
+      } else if (biome === 'server') {
+        ctx.strokeStyle = 'rgba(47,125,255,0.25)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < s.w; i += 20) ctx.strokeRect(sx + i, sy + 14, 16, 14);
+      } else {
+        ctx.strokeStyle = biome === 'boss'
+          ? 'rgba(255,90,90,0.35)' : 'rgba(34,247,255,0.30)';
+        ctx.beginPath();
+        ctx.moveTo(sx, sy + 20);
+        ctx.lineTo(sx + s.w, sy + 20);
+        ctx.moveTo(sx + 10, sy + 20);
+        ctx.lineTo(sx + 10, sy + 40);
+        ctx.moveTo(sx + s.w - 10, sy + 20);
+        ctx.lineTo(sx + s.w - 10, sy + 44);
+        ctx.stroke();
+      }
+    } else {
+      // floating platform — glowing slab
+      const glow = biome === 'beach' ? '#ff9a5a'
+                 : biome === 'server' ? '#2f7dff'
+                 : biome === 'boss' ? '#ff5a5a' : '#22f7ff';
+      ctx.fillStyle = '#12102c';
+      rr(sx, sy, s.w, s.h, 4);
+      ctx.fill();
+      ctx.strokeStyle = glow;
+      ctx.lineWidth = 2;
+      rr(sx, sy, s.w, s.h, 4);
+      ctx.stroke();
+      ctx.fillStyle = glow;
+      for (let i = 6; i < s.w - 6; i += 16) {
+        ctx.fillRect(sx + i, sy + s.h - 3, 8, 2);
+      }
+    }
+  }
+}
+
+// ----------------------------- WORLD: CHECKPOINT BEAMS ---------------------
+function drawCheckpoints() {
+  for (const cp of checkpoints) {
+    const sx = cp.x - cam.x;
+    if (sx < -80 || sx > VW + 80) continue;
+    const sy = cp.y - cam.y;
+
+    // vertical teleport beam
+    const beamAlpha = cp.active
+      ? 0.35 + Math.sin(elapsed * 0.1) * 0.12
+      : 0.14;
+    ctx.fillStyle = cp.active
+      ? 'rgba(46,240,184,' + beamAlpha + ')'
+      : 'rgba(34,247,255,' + beamAlpha + ')';
+    ctx.fillRect(sx - 6, sy - 260, 30, 400);
+
+    // terminal base
+    ctx.fillStyle = '#0c1230';
+    rr(sx - 4, sy + 40, 26, 50, 4);
+    ctx.fill();
+    ctx.strokeStyle = cp.active ? '#2ef0b8' : '#22f7ff';
+    ctx.lineWidth = 2;
+    rr(sx - 4, sy + 40, 26, 50, 4);
+    ctx.stroke();
+
+    // mini screen
+    ctx.fillStyle = cp.active ? 'rgba(46,240,184,0.35)' : 'rgba(34,247,255,0.2)';
+    ctx.fillRect(sx + 1, sy + 46, 16, 12);
+    ctx.fillStyle = cp.active ? '#2ef0b8' : '#6f8fff';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(cp.active ? 'OK' : '..', sx + 3, sy + 55);
+
+    // waving flag
+    ctx.strokeStyle = '#d8faff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx + 9, sy + 40);
+    ctx.lineTo(sx + 9, sy - 6);
+    ctx.stroke();
+    ctx.fillStyle = cp.active ? '#2ef0b8' : '#ffe94a';
+    const flap = Math.sin(elapsed * 0.12 + cp.x) * 3;
+    ctx.beginPath();
+    ctx.moveTo(sx + 9, sy - 6);
+    ctx.lineTo(sx + 30 + flap, sy - 1);
+    ctx.lineTo(sx + 9, sy + 6);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// ----------------------------- WORLD: TOKENS -------------------------------
+function drawTokens() {
+  for (const t of tokens) {
+    if (t.got) continue;
+    const sx = t.x - cam.x;
+    if (sx < -30 || sx > VW + 30) continue;
+    const sy = t.y - cam.y + Math.sin(t.t * 0.08) * 5;
+    const squash = Math.cos(t.t * 0.08); // spin-in-place coin flip
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.scale(Math.max(0.25, Math.abs(squash)), 1);
+    // glow
+    ctx.shadowColor = '#ffe94a';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#ffe94a';
+    ctx.beginPath();
+    ctx.arc(0, 0, t.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#b8860b';
+    ctx.beginPath();
+    ctx.arc(0, 0, t.r * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff6c0';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('T', 0, 1);
+    ctx.restore();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+}
+
+// ----------------------------- WORLD: PROJECTILE ART -----------------------
+function drawBolts() {
+  for (const b of bolts) {
+    const sx = b.x - cam.x;
+    const sy = b.y - cam.y;
+    // glowing capsule
+    ctx.save();
+    ctx.shadowColor = '#22f7ff';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#22f7ff';
+    rr(sx, sy, b.w, b.h, 3);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(sx + 3, sy + 2, b.w - 8, 2);
+    // trailing prompt glyph
+    ctx.fillStyle = 'rgba(34,247,255,0.5)';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('>', sx - b.dir * 10, sy + 8);
+    ctx.restore();
+  }
+}
+
+function drawEnemyShots() {
+  for (const s of enemyShots) {
+    const sx = s.x - cam.x;
+    const sy = s.y - cam.y;
+    if (s.type === 'gbubble') {
+      // hostile falling glitch bubble
+      const wob = Math.sin(s.t * 0.2) * 2;
+      ctx.save();
+      ctx.shadowColor = '#ff2fd0';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = 'rgba(255,47,208,0.35)';
+      ctx.beginPath();
+      ctx.arc(sx, sy, s.r + wob, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#ff2fd0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, s.r + wob, 0, Math.PI * 2);
+      ctx.stroke();
+      // RGB-split slice
+      ctx.fillStyle = 'rgba(34,247,255,0.5)';
+      ctx.fillRect(sx - s.r, sy - 3 + wob, s.r * 2, 3);
+      ctx.fillStyle = '#ffe94a';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(s.label, sx, sy + 3);
+      ctx.textAlign = 'left';
+      ctx.restore();
+    } else {
+      // rogue-terminal data packet
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(Math.atan2(s.vy, s.vx));
+      ctx.fillStyle = '#ff5a5a';
+      ctx.fillRect(0, 0, s.w, s.h);
+      ctx.fillStyle = '#ffe94a';
+      ctx.fillRect(2, 2, s.w - 4, s.h - 4);
+      ctx.fillStyle = '#3a0a10';
+      ctx.font = '7px monospace';
+      ctx.fillText('0x', 1, 8);
+      ctx.restore();
+    }
+  }
+}
+
+// ----------------------------- WORLD: PARTICLES ----------------------------
+function drawParticles() {
+  for (const p of particles) {
+    const a = clamp(p.life / p.max, 0, 1);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - cam.x - p.size / 2, p.y - cam.y - p.size / 2,
+                 p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ----------------------------- ENEMY ART -----------------------------------
+function drawShell(e) {
+  // corrupted shellfish: glitchy mollusc with mismatched claws
+  const sx = e.x - cam.x;
+  const sy = e.y - cam.y;
+  const step = Math.sin(e.t * 0.25) * 2;
+
+  ctx.save();
+  ctx.translate(sx + e.w / 2, sy + e.h / 2);
+  ctx.scale(e.dir, 1);
+
+  // scuttling legs
+  ctx.strokeStyle = '#7a2050';
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 3; i++) {
+    const lx = -8 + i * 9;
+    const lift = Math.sin(e.t * 0.3 + i * 2) * 3;
+    ctx.beginPath();
+    ctx.moveTo(lx, 6);
+    ctx.lineTo(lx + 2, 13 - lift);
+    ctx.stroke();
+  }
+
+  // shell body
+  ctx.fillStyle = e.flash > 0 ? '#ffffff' : '#e0447a';
+  ctx.beginPath();
+  ctx.ellipse(-2, -2, 16, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // shell ridges
+  ctx.strokeStyle = '#8a1848';
+  ctx.lineWidth = 2;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.arc(-2 + i * 6, -2, 7, Math.PI * 0.2, Math.PI * 0.8);
+    ctx.stroke();
+  }
+  // glitch stripe on the shell
+  if (Math.floor(e.t / 8) % 3 === 0) {
+    ctx.fillStyle = 'rgba(34,247,255,0.7)';
+    ctx.fillRect(-14, -6, 28, 3);
+  }
+
+  // good claw (left/front-ish)
+  ctx.fillStyle = '#ff8fb0';
+  ctx.beginPath();
+  ctx.moveTo(10, 0);
+  ctx.lineTo(20, -6);
+  ctx.lineTo(24, 0);
+  ctx.lineTo(20, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // corrupted glitch claw (offset RGB ghost)
+  ctx.fillStyle = '#22f7ff';
+  ctx.globalAlpha = 0.85;
+  ctx.fillRect(12, 4, 12, 6);
+  ctx.fillStyle = '#ff2fd0';
+  ctx.fillRect(14, 6, 12, 6);
+  ctx.globalAlpha = 1;
+
+  // eye stalks with glowing eyes
+  ctx.strokeStyle = '#ffd0e0';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(6, -8); ctx.lineTo(10, -16); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(2, -18); ctx.stroke();
+  ctx.fillStyle = '#ffe94a';
+  ctx.shadowColor = '#ffe94a';
+  ctx.shadowBlur = 6;
+  ctx.beginPath(); ctx.arc(10, -16, 3, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(2, -18, 3, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#100';
+  ctx.fillRect(10, -17, 2, 2);
+  ctx.fillRect(2, -19, 2, 2);
+
+  ctx.restore();
+}
+
+function drawTerm(e) {
+  // rogue terminal: angry little monitor on tank treads
+  const sx = e.x - cam.x;
+  const sy = e.y - cam.y;
+  const flick = Math.floor(e.t / 6) % 5 === 0;
+
+  ctx.save();
+  ctx.translate(sx + e.w / 2, sy + e.h / 2);
+  ctx.scale(e.dir, 1);
+
+  // treads
+  ctx.fillStyle = '#0a0f24';
+  rr(-14, 10, 28, 10, 4);
+  ctx.fill();
+  ctx.fillStyle = '#2f7dff';
+  for (let i = -10; i <= 8; i += 6) {
+    ctx.fillRect(i + (Math.floor(e.t / 4) % 6), 12, 3, 6);
+  }
+
+  // monitor body
+  ctx.fillStyle = e.flash > 0 ? '#ffffff' : '#152048';
+  rr(-15, -20, 30, 30, 4);
+  ctx.fill();
+  ctx.strokeStyle = '#2f7dff';
+  ctx.lineWidth = 2;
+  rr(-15, -20, 30, 30, 4);
+  ctx.stroke();
+
+  // screen with angry glitch face
+  ctx.fillStyle = flick ? 'rgba(255,90,90,0.35)' : 'rgba(34,247,255,0.2)';
+  ctx.fillRect(-11, -16, 22, 16);
+  ctx.fillStyle = flick ? '#ff5a5a' : '#22f7ff';
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('>:[', -8, -5);
+  // scanline on screen
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(-11, -16 + (Math.floor(e.t / 3) % 16), 22, 2);
+
+  // antenna with warning light
+  ctx.strokeStyle = '#8fa8ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(6, -20); ctx.lineTo(12, -28); ctx.stroke();
+  ctx.fillStyle = (Math.floor(e.t / 10) % 2) ? '#ff5a5a' : '#ffe94a';
+  ctx.beginPath(); ctx.arc(12, -28, 3, 0, 7); ctx.fill();
+
+  ctx.restore();
+}
+
+function drawBubble(e) {
+  // floating error bubble
+  const sx = e.x - cam.x;
+  const sy = e.y - cam.y;
+  const r = e.w / 2;
+  const wob = Math.sin(e.t * 0.08) * 2;
+
+  ctx.save();
+  ctx.translate(sx + r, sy + r);
+  ctx.shadowColor = '#ff2fd0';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = 'rgba(255,47,208,0.28)';
+  ctx.beginPath();
+  ctx.arc(0, 0, r + wob, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = e.flash > 0 ? '#ffffff' : '#ff2fd0';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, r + wob, 0, Math.PI * 2);
+  ctx.stroke();
+  // glint
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath();
+  ctx.arc(-r * 0.35, -r * 0.35, 3, 0, 7);
+  ctx.fill();
+  // error text inside
+  ctx.fillStyle = '#ffe94a';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  const labels = ['ERR', '404', 'XX', '?!'];
+  ctx.fillText(labels[Math.floor(e.t / 30) % labels.length], 0, 3);
+  ctx.textAlign = 'left';
+  // RGB slice glitch
+  if (Math.floor(e.t / 10) % 4 === 0) {
+    ctx.fillStyle = 'rgba(34,247,255,0.6)';
+    ctx.fillRect(-r, -2, r * 2, 2);
+  }
+  ctx.restore();
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    if (e.dead) continue;
+    if (e.x - cam.x < -80 || e.x - cam.x > VW + 80) continue;
+    if (e.type === 'shell') drawShell(e);
+    else if (e.type === 'term') drawTerm(e);
+    else drawBubble(e);
+  }
+}
+
+// ----------------------------- PLAYER ART ----------------------------------
+function drawPlayer() {
+  if (player.dead && deathTimer <= 0) return;
+  // flicker during i-frames
+  if (player.inv > 0 && Math.floor(player.inv / 4) % 2 === 0 && !player.dead) return;
+
+  const sx = player.x - cam.x + player.w / 2;
+  const sy = player.y - cam.y + player.h / 2;
+  const run = Math.abs(player.vx) > 0.5 && player.onGround;
+  const bob = run ? Math.sin(player.anim * 2.2) * 2 : Math.sin(elapsed * 0.06) * 1;
+  const recoil = player.recoil > 0 ? player.recoil * 0.8 : 0;
+
+  ctx.save();
+  ctx.translate(sx, sy + bob);
+  ctx.scale(player.facing, 1);
+  ctx.translate(-recoil, 0);
+
+  // --- small cape, flapping behind ---
+  const flap = Math.sin(elapsed * 0.25 + player.anim) * 4 + Math.abs(player.vx) * 1.5;
+  ctx.fillStyle = '#6d28d9';
+  ctx.beginPath();
+  ctx.moveTo(-2, -10);
+  ctx.quadraticCurveTo(-16 - Math.abs(player.vx), 2 + flap * 0.4, -11, 14 + flap * 0.3);
+  ctx.lineTo(1, 8);
+  ctx.closePath();
+  ctx.fill();
+  // cape lining
+  ctx.fillStyle = '#a78bfa';
+  ctx.beginPath();
+  ctx.moveTo(-2, -6);
+  ctx.quadraticCurveTo(-12, 4, -9, 12);
+  ctx.lineTo(-2, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // --- hooded robe body (tiny terminal explorer) ---
+  ctx.fillStyle = '#1e1b4b';
+  rr(-9, -6, 18, 22, 6);
+  ctx.fill();
+  // robe hem highlight
+  ctx.fillStyle = '#312e81';
+  rr(-9, 10, 18, 6, 3);
+  ctx.fill();
+  // terminal glyph stitched on the robe
+  ctx.fillStyle = '#22f7ff';
+  ctx.font = 'bold 8px monospace';
+  ctx.fillText('>', -3, 4);
+
+  // little running feet
+  const step = run ? Math.sin(player.anim * 2.2) * 4 : 0;
+  ctx.fillStyle = '#0f0a2e';
+  ctx.fillRect(-6 + step, 15, 5, 4);
+  ctx.fillRect(1 - step, 15, 5, 4);
+
+  // --- hood (over the head) ---
+  ctx.fillStyle = '#2d2a6e';
+  ctx.beginPath();
+  ctx.moveTo(-11, -4);
+  ctx.quadraticCurveTo(-12, -20, 0, -21);
+  ctx.quadraticCurveTo(12, -20, 11, -4);
+  ctx.lineTo(7, -4);
+  ctx.quadraticCurveTo(8, -14, 0, -15);
+  ctx.quadraticCurveTo(-8, -14, -7, -4);
+  ctx.closePath();
+  ctx.fill();
+  // hood rim
+  ctx.strokeStyle = '#4c4aad';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-11, -4);
+  ctx.quadraticCurveTo(-12, -20, 0, -21);
+  ctx.quadraticCurveTo(12, -20, 11, -4);
+  ctx.stroke();
+
+  // --- glowing eyes inside the hood ---
+  const blink = (Math.floor(elapsed / 50) % 7 === 0) ? 0.2 : 1;
+  ctx.fillStyle = '#7df9ff';
+  ctx.shadowColor = '#22f7ff';
+  ctx.shadowBlur = 8 * blink;
+  ctx.fillRect(-5, -12, 4, 3 * blink + 1);
+  ctx.fillRect(2, -12, 4, 3 * blink + 1);
+  ctx.shadowBlur = 0;
+
+  // arm holding the prompt blaster when firing
+  if (player.fireCd > 6 || Math.abs(player.vx) > 0.2) {
+    ctx.fillStyle = '#3b3aa0';
+    rr(6, -2, 8, 5, 2);
+    ctx.fill();
+    if (player.fireCd > 8) {
+      ctx.fillStyle = '#22f7ff';
+      ctx.shadowColor = '#22f7ff';
+      ctx.shadowBlur = 6;
+      ctx.fillRect(13, -1, 5, 3);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  ctx.restore();
+}
+
+// ----------------------------- BOSS ART: CYBER-LOBSTER ---------------------
+function drawBoss() {
+  const b = boss;
+  // dormant silhouette is still visible in the arena before the fight
+  if (!b.active && !b.dead) {
+    // drawn dimmed at its perch
+  }
+
+  const sx = b.x - cam.x + b.w / 2;
+  const sy = b.y - cam.y + b.h / 2;
+
+  // hit-flash palette swap
+  const flashing = b.flash > 0;
+  const shellMain = flashing ? '#ffffff' : '#e83a6e';
+  const shellDark = flashing ? '#ffd0d0' : '#8a1040';
+  const shellLite = flashing ? '#ffffff' : '#ff7aa0';
+  const metal     = flashing ? '#ffffff' : '#5a6a9a';
+  const accent    = flashing ? '#ffffff' : '#22f7ff';
+
+  ctx.save();
+
+  // glitch jitter: offset the whole body on glitch frames
+  let jx = 0, jy = 0;
+  if (b.glitch > 0) {
+    jx = rand(-4, 4);
+    jy = rand(-2, 2);
+  }
+  ctx.translate(sx + jx, sy + jy);
+
+  // slight droop while dying
+  if (b.dead) {
+    ctx.rotate(Math.min(0.5, b.deathT * 0.01) * b.dir);
+    ctx.globalAlpha = clamp(1 - b.deathT / 140, 0.25, 1);
+  }
+
+  ctx.scale(b.dir, 1); // always face the player
+  const hop = b.onGround ? 0 : -3;
+  ctx.translate(0, hop);
+
+  const clawOpen = Math.sin(b.claw) * 6 + (b.lungeT > 0 ? 8 : 0);
+
+  // ---- spindly legs (behind the body) ----
+  ctx.strokeStyle = shellDark;
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 4; i++) {
+    const lx = -40 + i * 26;
+    const lift = Math.sin(b.claw * 2 + i) * 5;
+    ctx.beginPath();
+    ctx.moveTo(lx, 30);
+    ctx.lineTo(lx + 6, 52 - lift);
+    ctx.lineTo(lx + 14, 64 - lift);
+    ctx.stroke();
+  }
+
+  // ---- tail segments curling behind ----
+  for (let i = 0; i < 4; i++) {
+    const tx = -70 - i * 22;
+    const ty = 6 + i * 6 + Math.sin(b.claw + i) * 3;
+    const s = 26 - i * 4;
+    ctx.fillStyle = i % 2 ? shellDark : shellMain;
+    ctx.beginPath();
+    ctx.ellipse(tx, ty, s * 0.55, s * 0.45, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = shellLite;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  // tail fan
+  ctx.fillStyle = shellMain;
+  ctx.beginPath();
+  ctx.moveTo(-150, 16);
+  ctx.lineTo(-176, 4);
+  ctx.lineTo(-172, 24);
+  ctx.lineTo(-178, 40);
+  ctx.lineTo(-152, 32);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // ---- main carapace with overlapping shell armour plates ----
+  ctx.fillStyle = shellMain;
+  rr(-60, -46, 120, 92, 22);
+  ctx.fill();
+
+  // armour plate 1
+  ctx.fillStyle = shellDark;
+  rr(-54, -40, 48, 40, 12);
+  ctx.fill();
+  ctx.strokeStyle = shellLite;
+  ctx.lineWidth = 2;
+  rr(-54, -40, 48, 40, 12);
+  ctx.stroke();
+  // armour plate 2
+  ctx.fillStyle = flashing ? '#ffe0e8' : '#c02858';
+  rr(-10, -42, 52, 42, 12);
+  ctx.fill();
+  ctx.strokeStyle = shellLite;
+  rr(-10, -42, 52, 42, 12);
+  ctx.stroke();
+  // armour plate 3 (belly)
+  ctx.fillStyle = flashing ? '#fff' : '#ff9ab5';
+  rr(-40, 8, 90, 32, 12);
+  ctx.fill();
+
+  // rivets on the plates
+  ctx.fillStyle = '#ffe94a';
+  const rivets = [[-44,-30],[-14,-30],[0,-32],[34,-30],[-30,20],[0,28],[30,20]];
+  for (const [rx, ry] of rivets) {
+    ctx.beginPath(); ctx.arc(rx, ry, 3, 0, 7); ctx.fill();
+  }
+
+  // cyber circuit lines glowing on the shell
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = flashing ? 1 : 0.75;
+  ctx.beginPath();
+  ctx.moveTo(-50, -10);
+  ctx.lineTo(-20, -10);
+  ctx.lineTo(-20, 14);
+  ctx.lineTo(20, 14);
+  ctx.lineTo(20, -6);
+  ctx.lineTo(44, -6);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // ---- head / rostrum ----
+  ctx.fillStyle = shellMain;
+  ctx.beginPath();
+  ctx.moveTo(52, -30);
+  ctx.lineTo(86, -8);
+  ctx.lineTo(78, 14);
+  ctx.lineTo(48, 18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = shellLite;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // ---- glowing mismatched eyes on stalks ----
+  // eye 1: big
+  ctx.strokeStyle = shellLite;
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(58, -22); ctx.lineTo(70, -44); ctx.stroke();
+  // eye 2: smaller, offset (disfigured)
+  ctx.beginPath(); ctx.moveTo(66, -14); ctx.lineTo(84, -34); ctx.stroke();
+  // eye 3: tiny third eye
+  ctx.beginPath(); ctx.moveTo(52, -26); ctx.lineTo(54, -50); ctx.stroke();
+
+  const eyeGlow = b.dead ? '#555' : (Math.floor(elapsed / 8) % 3 ? '#ffe94a' : '#ff2fd0');
+  ctx.fillStyle = b.dead ? '#666' : eyeGlow;
+  ctx.shadowColor = b.dead ? 'transparent' : eyeGlow;
+  ctx.shadowBlur = b.dead ? 0 : 10;
+  ctx.beginPath(); ctx.arc(70, -44, 7, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(84, -34, 5, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(54, -50, 4, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  // pupils
+  if (!b.dead) {
+    ctx.fillStyle = '#100010';
+    ctx.fillRect(70, -46, 4, 5);
+    ctx.fillRect(84, -36, 3, 4);
+    ctx.fillRect(54, -51, 2, 3);
+  }
+
+  // ---- antennae with glowing tips ----
+  ctx.strokeStyle = '#ffb0c8';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(72, -26);
+  ctx.quadraticCurveTo(100, -70 + Math.sin(b.claw) * 6, 118, -60);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(78, -20);
+  ctx.quadraticCurveTo(110, -50 + Math.cos(b.claw) * 6, 130, -36);
+  ctx.stroke();
+  ctx.fillStyle = accent;
+  ctx.shadowColor = accent;
+  ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(118, -60, 5, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(130, -36, 4, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // ---- MISMATCHED CLAW #1: huge organic pincer (top) ----
+  ctx.strokeStyle = shellDark;
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.moveTo(40, -18);
+  ctx.lineTo(88, -34);
+  ctx.stroke();
+  // pincer base
+  ctx.fillStyle = flashing ? '#fff' : '#ff5f8a';
+  ctx.beginPath();
+  ctx.ellipse(104, -38, 22, 16, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = shellLite;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // upper jaw
+  ctx.fillStyle = shellMain;
+  ctx.beginPath();
+  ctx.moveTo(108, -44);
+  ctx.quadraticCurveTo(148, -56 - clawOpen, 156, -40 - clawOpen);
+  ctx.quadraticCurveTo(140, -44 - clawOpen * 0.5, 112, -34);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // lower jaw
+  ctx.fillStyle = shellDark;
+  ctx.beginPath();
+  ctx.moveTo(108, -34);
+  ctx.quadraticCurveTo(146, -22 + clawOpen, 154, -36 + clawOpen);
+  ctx.quadraticCurveTo(138, -34 + clawOpen * 0.5, 112, -40);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // pincer teeth
+  ctx.fillStyle = '#fff0f5';
+  for (let i = 0; i < 3; i++) {
+    const tx = 120 + i * 11;
+    ctx.beginPath();
+    ctx.moveTo(tx, -40 - clawOpen * (i / 3));
+    ctx.lineTo(tx + 4, -46 - clawOpen * (i / 3));
+    ctx.lineTo(tx + 8, -40 - clawOpen * (i / 3));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // ---- MISMATCHED CLAW #2: smaller mech claw with spinning saw (bottom) ----
+  ctx.strokeStyle = metal;
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(42, 14);
+  ctx.lineTo(86, 30);
+  ctx.stroke();
+  // hydraulic piston detail
+  ctx.strokeStyle = '#9fb0d8';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(50, 10);
+  ctx.lineTo(80, 24);
+  ctx.stroke();
+
+  // boxy industrial gripper
+  ctx.fillStyle = flashing ? '#fff' : '#3d4a70';
+  rr(86, 18, 34, 26, 4);
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  rr(86, 18, 34, 26, 4);
+  ctx.stroke();
+  // warning stripe
+  ctx.fillStyle = '#ffe94a';
+  ctx.fillRect(90, 22, 26, 4);
+  ctx.fillStyle = '#100';
+  for (let i = 0; i < 5; i++) ctx.fillRect(90 + i * 6, 22, 3, 4);
+
+  // gripper fingers (snapping)
+  ctx.fillStyle = metal;
+  ctx.beginPath();
+  ctx.moveTo(118, 20);
+  ctx.lineTo(136 + clawOpen, 16 - clawOpen * 0.5);
+  ctx.lineTo(134, 26);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(118, 40);
+  ctx.lineTo(136 + clawOpen, 44 + clawOpen * 0.5);
+  ctx.lineTo(134, 34);
+  ctx.closePath();
+  ctx.fill();
+
+  // spinning saw disc mounted on the wrist
+  ctx.save();
+  ctx.translate(100, 14);
+  ctx.rotate(b.saw);
+  ctx.fillStyle = '#c8d4f0';
+  ctx.beginPath();
+  ctx.arc(0, 0, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, 14, 0, Math.PI * 2);
+  ctx.stroke();
+  // teeth
+  ctx.fillStyle = '#e8eefc';
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    ctx.save();
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(12, -3);
+    ctx.lineTo(19, 0);
+    ctx.lineTo(12, 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = '#22f7ff';
+  ctx.beginPath(); ctx.arc(0, 0, 4, 0, 7); ctx.fill();
+  ctx.restore();
+
+  // ---- mouth bits / mandibles ----
+  ctx.strokeStyle = '#4a0a20';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(78, 4);
+  ctx.lineTo(92, 10 + Math.sin(b.claw * 3) * 3);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(76, 10);
+  ctx.lineTo(90, 16 - Math.sin(b.claw * 3) * 3);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // ---- screen-space glitch slices over the boss ----
+  if (b.glitch > 0 && !b.dead) {
+    const bx = b.x - cam.x;
+    const by = b.y - cam.y;
+    for (let i = 0; i < 3; i++) {
+      const gy = by + rand(0, b.h);
+      const gh = rand(3, 10);
+      const gx = rand(-12, 12);
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = i % 2 ? '#22f7ff' : '#ff2fd0';
+      ctx.fillRect(bx + gx, gy, b.w, gh);
+      // shifted copy stripe (dark tear)
+      ctx.fillStyle = 'rgba(10,2,20,0.7)';
+      ctx.fillRect(bx - gx, gy + gh, b.w, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // dormant "Z z z" hint before the fight wakes it
+  if (!b.active && !b.dead) {
+    ctx.fillStyle = 'rgba(34,247,255,0.5)';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('Z', b.x - cam.x + b.w - 20, b.y - cam.y - 8);
+    ctx.fillText('z', b.x - cam.x + b.w - 6, b.y - cam.y - 22);
+  }
+}
+
+// energy gate that locks once the fight starts
+function drawGate() {
+  if (arenaGate.hidden) return;
+  const sx = arenaGate.x - cam.x;
+  if (sx < -60 || sx > VW + 60) return;
+  const pulse = 0.4 + Math.sin(elapsed * 0.15) * 0.2;
+  ctx.fillStyle = 'rgba(255,47,208,' + pulse * 0.5 + ')';
+  ctx.fillRect(sx, 0, arenaGate.w, VH);
+  ctx.strokeStyle = '#ff2fd0';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let y = 0; y < VH; y += 16) {
+    ctx.moveTo(sx + Math.sin(y * 0.1 + elapsed * 0.2) * 5, y);
+    ctx.lineTo(sx + arenaGate.w + Math.cos(y * 0.1 + elapsed * 0.2) * 5, y + 8);
+  }
+  ctx.stroke();
+  // hazard chevrons
+  ctx.fillStyle = '#ffe94a';
+  ctx.font = 'bold 12px monospace';
+  for (let y = 30; y < VH; y += 70) {
+    ctx.fillText('◤', sx + 4, y);
+  }
+}
+
+// ----------------------------- HUD -----------------------------------------
+function drawHUD() {
+  if (state !== 'playing' && state !== 'gameover' && state !== 'win') return;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // re-apply dpr scale
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const pad = 14;
+
+  // --- health bar (segmented) ---
+  const hpW = 170, hpH = 18;
+  ctx.fillStyle = 'rgba(5,2,20,0.75)';
+  rr(pad, pad, hpW + 4, hpH + 22, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#22f7ff';
+  ctx.lineWidth = 2;
+  rr(pad, pad, hpW + 4, hpH + 22, 6);
+  ctx.stroke();
+  ctx.fillStyle = '#9fffe8';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('HP', pad + 6, pad + 14);
+  const segW = (hpW - 34) / player.maxHp;
+  for (let i = 0; i < player.maxHp; i++) {
+    const x = pad + 30 + i * (segW + 2);
+    const filled = i < player.hp;
+    ctx.fillStyle = filled
+      ? (player.hp <= 2 ? '#ff5a5a' : '#2ef0b8')
+      : 'rgba(255,255,255,0.12)';
+    rr(x, pad + 5, segW, hpH - 6, 3);
+    ctx.fill();
+    if (filled) {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillRect(x + 2, pad + 7, segW - 4, 3);
+    }
+  }
+
+  // --- score + tokens ---
+  ctx.fillStyle = 'rgba(5,2,20,0.75)';
+  rr(pad, pad + 30, 210, 44, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#ff2fd0';
+  ctx.lineWidth = 2;
+  rr(pad, pad + 30, 210, 44, 6);
+  ctx.stroke();
+  ctx.fillStyle = '#ffe94a';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('SCORE ' + String(score).padStart(6, '0'), pad + 10, pad + 48);
+  // token icon
+  ctx.fillStyle = '#ffe94a';
+  ctx.beginPath(); ctx.arc(pad + 18, pad + 63, 7, 0, 7); ctx.fill();
+  ctx.fillStyle = '#b8860b';
+  ctx.beginPath(); ctx.arc(pad + 18, pad + 63, 4, 0, 7); ctx.fill();
+  ctx.fillStyle = '#9fffe8';
+  ctx.fillText('TOKENS ' + tokenCount + ' / ' + TOKEN_SPAWNS.length,
+               pad + 32, pad + 68);
+
+  // --- progress bar (level completion toward the boss) ---
+  const prW = Math.min(320, VW * 0.32);
+  const prX = (VW - prW) / 2;
+  const prY = 14;
+  ctx.fillStyle = 'rgba(5,2,20,0.75)';
+  rr(prX - 8, prY - 8, prW + 16, 34, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#2f7dff';
+  ctx.lineWidth = 2;
+  rr(prX - 8, prY - 8, prW + 16, 34, 6);
+  ctx.stroke();
+  ctx.fillStyle = '#6f8fff';
+  ctx.font = '10px monospace';
+  ctx.fillText('SHORELINE PROGRESS', prX, prY + 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  rr(prX, prY + 8, prW, 10, 4);
+  ctx.fill();
+  const prog = clamp((player.x) / ARENA_L, 0, 1);
+  const pg = ctx.createLinearGradient(prX, 0, prX + prW, 0);
+  pg.addColorStop(0, '#22f7ff');
+  pg.addColorStop(0.6, '#2ef0b8');
+  pg.addColorStop(1, '#ff2fd0');
+  ctx.fillStyle = pg;
+  rr(prX, prY + 8, Math.max(6, prW * prog), 10, 4);
+  ctx.fill();
+  // little agent marker
+  ctx.fillStyle = '#ffe94a';
+  ctx.beginPath();
+  ctx.arc(prX + prW * prog, prY + 13, 5, 0, 7);
+  ctx.fill();
+  // boss skull marker at the end
+  ctx.fillStyle = boss.active ? '#ff5a5a' : '#556';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('LOBSTER', prX + prW - 44, prY + 2);
+
+  // --- boss health bar (only during the fight) ---
+  if (boss.active) {
+    const bw = Math.min(460, VW * 0.5);
+    const bx = (VW - bw) / 2;
+    const by = VH - 54;
+    ctx.fillStyle = 'rgba(5,2,20,0.85)';
+    rr(bx - 10, by - 24, bw + 20, 50, 8);
+    ctx.fill();
+    ctx.strokeStyle = '#ff5a5a';
+    ctx.lineWidth = 2;
+    rr(bx - 10, by - 24, bw + 20, 50, 8);
+    ctx.stroke();
+    ctx.fillStyle = '#ff5a5a';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('FINAL PROCESS // CYBER-LOBSTER  mimo-v2.6-flash-free',
+                 VW / 2, by - 8);
+    ctx.textAlign = 'left';
+    // bar track
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    rr(bx, by, bw, 16, 4);
+    ctx.fill();
+    // bar fill
+    const frac = boss.hp / boss.maxHp;
+    const bg = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+    bg.addColorStop(0, '#ff2fd0');
+    bg.addColorStop(0.5, '#ff5a5a');
+    bg.addColorStop(1, '#ffe94a');
+    ctx.fillStyle = boss.dead ? '#555' : bg;
+    if (frac > 0) {
+      rr(bx, by, bw * frac, 16, 4);
+      ctx.fill();
+    }
+    // segment ticks
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    for (let i = 1; i < 6; i++) {
+      ctx.beginPath();
+      ctx.moveTo(bx + (bw * i) / 6, by);
+      ctx.lineTo(bx + (bw * i) / 6, by + 16);
+      ctx.stroke();
+    }
+    // enraged eye indicator under half
+    if (!boss.dead && frac <= 0.5) {
+      ctx.fillStyle = '#ffe94a';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('!! ENRAGED !!', bx + bw, by - 8);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // --- checkpoint hint line ---
+  if (state === 'playing' && elapsed < 400 && !boss.active) {
+    ctx.fillStyle = 'rgba(159,255,232,' + (0.7 - elapsed / 600) + ')';
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Reach the CYBER-LOBSTER at the end of the shoreline',
+                 VW / 2, VH - 18);
+    ctx.textAlign = 'left';
+  }
+
+  ctx.restore();
+  // restore base transform for next frame
+  const dpr2 = Math.min(window.devicePixelRatio || 1, 2);
+  ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+}
+
+// ----------------------------- MASTER RENDER --------------------------------
+function render() {
+  // clear (identity-safe fill of the full view)
+  ctx.fillStyle = '#05020f';
+  ctx.fillRect(0, 0, VW, VH);
+
+  // screen-space background layers
+  drawSky();
+  drawParallaxFar();
+  drawParallaxMid();
+
+  // camera transform for the world layer
+  const shx = shake > 0 ? rand(-shake, shake) : 0;
+  const shy = shake > 0 ? rand(-shake, shake) * 0.6 : 0;
+  ctx.save();
+  ctx.translate(-cam.x + shx, -cam.y + shy);
+
+  drawWater();
+  drawSolids();
+  drawCheckpoints();
+  drawTokens();
+  drawEnemies();
+  drawGate();
+  drawBoss();
+  drawBolts();
+  drawEnemyShots();
+  drawPlayer();
+  drawParticles();
+
+  ctx.restore();
+
+  // HUD on top (screen space)
+  drawHUD();
+}
+
+// ----------------------------- MAIN LOOP -----------------------------------
+let lastTs = 0;
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!lastTs) lastTs = ts;
+  // dt in ~1/60s units, clamped so tab-switches don't explode physics
+  let dt = (ts - lastTs) / 16.6667;
+  lastTs = ts;
+  if (dt > 2.5) dt = 2.5;
+  if (dt <= 0) return;
+
+  update(dt);
+  render();
+}
+
+// boot: build a world for the attract-mode title screen, then start rAF
+resetGame();
+state = 'start';
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
