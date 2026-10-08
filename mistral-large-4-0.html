@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HERMES://SHORELINE — Protocol Lobster</title>
+<!--
+  ==========================================================================
+  HERMES://SHORELINE
+  A retro-tech side-scrolling platformer in ONE self-contained HTML file.
+  - No libraries, no images, no audio files: everything is drawn on <canvas>
+    and every sound is synthesized live with the WebAudio API.
+  - A tiny hooded "Hermes Agent" terminal explorer crosses a chaotic digital
+    shoreline (beach + server room + cyberpunk terminal) to defeat the final
+    boss: a huge disfigured cyber-lobster.
+  - Controls: WASD/arrows = move, SPACE/W/UP = jump, J or mouse click =
+    shoot prompt bolts, R = restart after win/game-over, ENTER = start.
+  ==========================================================================
+-->
+<style>
+  /* ---------- base ---------- */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #05060f; }
+  body { font-family: 'Courier New', Courier, monospace; user-select: none; }
+  #stage { position: fixed; inset: 0; }
+  canvas#game { display: block; width: 100%; height: 100%; }
+
+  /* ---------- CRT overlays ---------- */
+  #scanlines { position: fixed; inset: 0; pointer-events: none; z-index: 30;
+    background: repeating-linear-gradient(0deg,
+      rgba(0,0,0,.16) 0px, rgba(0,0,0,.16) 1px, transparent 1px, transparent 3px); }
+  #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 31;
+    background: radial-gradient(ellipse at center, transparent 52%, rgba(2,2,14,.6) 100%); }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; top: 0; left: 0; right: 0; z-index: 20; pointer-events: none;
+    padding: 10px 16px; color: #7df9ff; font-size: 13px; letter-spacing: 1px;
+    text-shadow: 0 0 6px rgba(125,249,255,.9), 0 0 2px #000; display: none; }
+  #hud .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+  #hud .label { color: #ff5fd2; text-shadow: 0 0 6px rgba(255,95,210,.9), 0 0 2px #000; margin-right: 6px; }
+  .bar { width: 150px; height: 12px; border: 1px solid #7df9ff; background: rgba(5,10,30,.7);
+    box-shadow: 0 0 8px rgba(125,249,255,.4); display: inline-block; vertical-align: middle; }
+  .bar > i { display: block; height: 100%; width: 100%;
+    background: linear-gradient(90deg,#00e5a0,#7df9ff); transition: width .15s; }
+  #healthBar { background: linear-gradient(90deg,#ff4d6d,#ff9f1c) !important; }
+  #bossBarWrap { display: none; margin-top: 8px; }
+  #bossBarWrap .bar { width: 320px; }
+  #bossBar { background: linear-gradient(90deg,#ff2d55,#ff9f1c) !important; }
+  #progressWrap { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 20; pointer-events: none; display: none; }
+  #progressWrap .bar { width: 260px; }
+  #toast { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); z-index: 25;
+    color: #ffe66d; font-size: 20px; letter-spacing: 3px; pointer-events: none;
+    text-shadow: 0 0 10px rgba(255,230,109,.9), 0 0 2px #000; opacity: 0; transition: opacity .25s; }
+
+  /* ---------- full-screen overlays (start / win / game over) ---------- */
+  .screen { position: fixed; inset: 0; z-index: 40; display: none; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; color: #7df9ff;
+    background: radial-gradient(ellipse at center, rgba(20,8,50,.92), rgba(3,3,12,.97));
+    letter-spacing: 2px; padding: 20px; }
+  .screen.show { display: flex; }
+  .glitch { font-size: 44px; font-weight: bold; color: #7df9ff;
+    text-shadow: 2px 0 #ff2d55, -2px 0 #00e5ff; animation: jitter .35s infinite steps(2); }
+  @keyframes jitter {
+    0%   { text-shadow: 2px 0 #ff2d55, -2px 0 #00e5ff; transform: translate(0,0); }
+    50%  { text-shadow: -3px 1px #ff2d55, 3px -1px #00e5ff; transform: translate(1px,-1px); }
+    100% { text-shadow: 1px -1px #ff2d55, -1px 1px #00e5ff; transform: translate(-1px,1px); }
+  }
+  .screen h2 { font-size: 20px; color: #ff5fd2; margin: 16px 0 8px;
+    text-shadow: 0 0 8px rgba(255,95,210,.8); }
+  .screen p { font-size: 14px; line-height: 2; color: #b8c7ff; }
+  .screen .blink { animation: blink 1s steps(2) infinite; color: #ffe66d;
+    margin-top: 28px; font-size: 16px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .key { display: inline-block; border: 1px solid #7df9ff; padding: 1px 7px; margin: 0 2px;
+    color: #ffe66d; text-shadow: none; box-shadow: 0 0 6px rgba(125,249,255,.5); }
+  #stats-over, #stats-win { color: #ffe66d; font-size: 15px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+</div>
+
+<!-- HUD (visible during gameplay) -->
+<div id="hud">
+  <div class="row">
+    <span><span class="label">HP</span><span class="bar"><i id="healthBar"></i></span></span>
+    <span><span class="label">LIVES</span><span id="lives"></span></span>
+    <span><span class="label">SCORE</span><span id="score">0</span></span>
+    <span><span class="label">TOKENS</span><span id="tokens">0</span></span>
+  </div>
+  <div id="bossBarWrap">
+    <span class="label">CYBER-LOBSTER</span>
+    <span class="bar"><i id="bossBar"></i></span>
+  </div>
+</div>
+<div id="progressWrap"><span class="bar"><i id="progressBar"></i></span></div>
+<div id="toast"></div>
+
+<!-- START SCREEN -->
+<div class="screen show" id="scr-start">
+  <div class="glitch">HERMES://SHORELINE</div>
+  <h2>PROTOCOL LOBSTER — FINAL BOSS AWAITS</h2>
+  <p>
+    Move: <span class="key">A</span><span class="key">D</span> / <span class="key">&#8592;</span><span class="key">&#8594;</span><br>
+    Jump: <span class="key">W</span> / <span class="key">&#8593;</span> / <span class="key">SPACE</span><br>
+    Shoot prompt bolt: <span class="key">J</span> or <span class="key">CLICK</span><br>
+    Stomp enemies by falling on them &nbsp;&bull;&nbsp; Restart: <span class="key">R</span>
+  </p>
+  <div class="blink">PRESS ENTER TO JACK IN</div>
+</div>
+
+<!-- GAME OVER SCREEN -->
+<div class="screen" id="scr-over">
+  <div class="glitch">SIGNAL LOST</div>
+  <h2>THE SHORELINE CONSUMED YOU</h2>
+  <div id="stats-over"></div>
+  <div class="blink">PRESS R TO REBOOT</div>
+</div>
+
+<!-- WIN SCREEN -->
+<div class="screen" id="scr-win">
+  <div class="glitch">LOBSTER.EXE TERMINATED</div>
+  <h2>SHORELINE SECURED — YOU WIN!</h2>
+  <div id="stats-win"></div>
+  <div class="blink">PRESS R TO PLAY AGAIN</div>
+</div>
+
+<div id="scanlines"></div>
+<div id="vignette"></div>
+
+<script>
+'use strict';
+/* ==========================================================================
+   SECTION 1 — CANVAS SETUP, INPUT, AND TINY SYNTHESIZER
+   ========================================================================== */
+
+// ----- canvas & responsive viewport -----
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const rand = (a, b) => a + Math.random() * (b - a);
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// deterministic rng so the level layout is identical every run
+let rngSeed = 20261007;
+function srnd() {
+  rngSeed = (rngSeed * 1664525 + 1013904223) >>> 0;
+  return rngSeed / 4294967296;
+}
+
+// ----- keyboard & mouse input -----
+const keys = {};
+window.addEventListener('keydown', (e) => {
+  if (!keys[e.code]) { // "first press" only (ignores auto-repeat)
+    if (e.code === 'Enter' && state !== 'play') startGame();
+    if (e.code === 'KeyR' && (state === 'over' || state === 'win')) startGame();
+    if (e.code === 'KeyJ') shoot();
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') jump();
+  }
+  keys[e.code] = true;
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+canvas.addEventListener('mousedown', () => shoot());
+
+// ----- tiny WebAudio synth (no audio files needed) -----
+let actx = null;
+function audio() {
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (err) { actx = null; }
+  }
+  return actx;
+}
+function beep(freq, dur, type, vol, slideTo) {
+  const ac = audio();
+  if (!ac) return;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, ac.currentTime);
+  if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, ac.currentTime + dur);
+  gain.gain.setValueAtTime(vol || 0.1, ac.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.start(); osc.stop(ac.currentTime + dur);
+}
+const sfx = {
+  jump:  () => beep(280, 0.12, 'square', 0.08, 720),
+  shoot: () => beep(900, 0.06, 'sawtooth', 0.06, 200),
+  coin:  () => { beep(1250, 0.06, 'sine', 0.12); setTimeout(() => beep(1660, 0.1, 'sine', 0.12), 60); },
+  hurt:  () => beep(150, 0.28, 'sawtooth', 0.14, 55),
+  stomp: () => beep(500, 0.1, 'square', 0.1, 900),
+  checkpoint: () => { beep(520, 0.09, 'square', 0.12); setTimeout(() => beep(780, 0.14, 'square', 0.12), 90); },
+  bossHit: () => beep(110, 0.12, 'triangle', 0.16, 70),
+  bossDie: () => { [880, 660, 440, 220].forEach((f, i) => setTimeout(() => beep(f, 0.3, 'sawtooth', 0.16), i * 90)); },
+  win:   () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'square', 0.12), i * 110)); },
+  over:  () => { [330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.25, 'sawtooth', 0.12), i * 160)); },
+};
+
+/* ==========================================================================
+   SECTION 2 — GAME STATE, HUD REFERENCES, SCREENS
+   ========================================================================== */
+
+let state = 'start';            // start | play | over | win
+let score = 0;
+let tokens = 0;
+let health = 100;
+const MAX_HEALTH = 100;
+let lives = 3;
+let camX = 0;                   // camera x (world pixels)
+let worldTime = 0;              // seconds, drives all animation
+let shake = 0;                  // screen-shake magnitude
+
+// physics tuning (pixels & seconds)
+const GRAVITY  = 2400;
+const MOVE_SPD = 340;
+const ACCEL    = 3000;
+const FRICTION = 2600;
+const JUMP_VEL = 900;
+const MAX_FALL = 1500;
+
+// level layout
+const LEVEL_W  = 4800;
+const GROUND_H = 130;
+const ARENA_X  = LEVEL_W - 950;        // boss arena begins here
+const groundY  = () => H - GROUND_H;    // top of the ground (moves on resize)
+
+// ----- HUD & screen element references -----
+const elHealth  = document.getElementById('healthBar');
+const elBossBar = document.getElementById('bossBar');
+const elBossWrap = document.getElementById('bossBarWrap');
+const elLives   = document.getElementById('lives');
+const elScore   = document.getElementById('score');
+const elTokens  = document.getElementById('tokens');
+const elProgress = document.getElementById('progressBar');
+const elHud     = document.getElementById('hud');
+const elProgressWrap = document.getElementById('progressWrap');
+const elToast   = document.getElementById('toast');
+const elStatsOver = document.getElementById('stats-over');
+const elStatsWin  = document.getElementById('stats-win');
+const screens = {
+  start: document.getElementById('scr-start'),
+  over:  document.getElementById('scr-over'),
+  win:   document.getElementById('scr-win'),
+};
+
+let toastTimer = 0;
+function toast(msg) {
+  elToast.textContent = msg;
+  elToast.style.opacity = 1;
+  toastTimer = 1.6;
+}
+function showScreen(name) {
+  Object.keys(screens).forEach((k) => screens[k].classList.toggle('show', k === name));
+}
+
+/* ==========================================================================
+   SECTION 3 — LEVEL GENERATION (deterministic, seeded)
+   ========================================================================== */
+
+let groundSegs = [];    // solid ground rectangles (with a few pits between)
+let platforms = [];     // floating solid platforms
+let coins = [];         // collectible "tokens"
+let enemies = [];       // crabs, rogue terminals, error bubbles
+let checkpoints = [];   // respawn flags
+let decor = [];         // foreground decorations (glitch palms, server racks)
+let isles = [];         // parallax floating islands
+let farBuildings = [];  // parallax server skyline
+let solids = [];        // groundSegs + platforms (rebuilt on reset/resize)
+
+function buildLevel() {
+  rngSeed = 20261007;
+  // clear in place so external references (debug handle) stay valid
+  groundSegs.length = 0; platforms.length = 0; coins.length = 0; enemies.length = 0;
+  checkpoints.length = 0; decor.length = 0; isles.length = 0; farBuildings.length = 0;
+
+  // --- ground with three pits (glowing cyber-water shows through) ---
+  const pits = [[1450, 150], [2650, 170], [3650, 150]];
+  let gx = 0;
+  for (const [px, pw] of pits) {
+    if (px > gx) groundSegs.push({ x: gx, y: groundY(), w: px - gx, h: GROUND_H + 400 });
+    gx = px + pw;
+  }
+  groundSegs.push({ x: gx, y: groundY(), w: LEVEL_W - gx, h: GROUND_H + 400 });
+
+  // --- floating platforms (server racks / decks / buoy barrels) ---
+  let px = 320;
+  while (px < LEVEL_W - 1100) {
+    const w = 90 + srnd() * 150;
+    const y = groundY() - (70 + srnd() * 90);   // reachable with one jump
+    const r = srnd();
+    const type = r < 0.45 ? 'rack' : (r < 0.75 ? 'deck' : 'buoy');
+    platforms.push({ x: px, y, w, h: 18, type });
+    // a small stack of tokens above each platform
+    const n = 1 + Math.floor(srnd() * 3);
+    for (let i = 0; i < n; i++) {
+      coins.push({
+        x: px + w * (0.25 + 0.5 * i / Math.max(1, n - 1)),
+        y: y - 46 - i * 26, r: 9, t: srnd() * TAU,
+      });
+    }
+    px += w + 130 + srnd() * 80;   // gap always jumpable
+  }
+
+  // --- token arcs along the ground ---
+  for (let cx = 700; cx < LEVEL_W - 1200; cx += 600 + srnd() * 500) {
+    for (let i = 0; i < 5; i++) {
+      coins.push({ x: cx + i * 34, y: groundY() - 40 - Math.sin(i / 4 * Math.PI) * 90, r: 9, t: srnd() * TAU });
+    }
+  }
+
+  // --- checkpoints (respawn flags) ---
+  [1150, 2350, 3550].forEach((cx, i) => {
+    checkpoints.push({ x: cx, y: groundY() - 110, w: 14, h: 110, active: i === 0 });
+  });
+
+  // --- corrupted shellfish (crabs) patrolling the ground segments ---
+  groundSegs.forEach((seg) => {
+    if (seg.w < 400) return;
+    const n = Math.floor(seg.w / 420);
+    for (let i = 0; i < n; i++) {
+      const cx = seg.x + 120 + (seg.w - 240) * (n === 1 ? 0.5 : i / (n - 1)) + srnd() * 60;
+      const range = 120 + srnd() * 140;
+      enemies.push({
+        kind: 'crab', x: cx, y: groundY() - 34, w: 40, h: 34,
+        x0: Math.max(seg.x + 40, cx - range),
+        x1: Math.min(seg.x + seg.w - 40, cx + range),
+        dir: srnd() < 0.5 ? 1 : -1,
+        speed: 60 + srnd() * 50, vx: 0, vy: 0, t: srnd() * TAU,
+      });
+    }
+  });
+
+  // --- crabs on some wide platforms ---
+  platforms.forEach((p) => {
+    if (p.w > 160 && srnd() < 0.45) {
+      enemies.push({
+        kind: 'crab', x: p.x + p.w / 2, y: p.y - 34, w: 40, h: 34,
+        x0: p.x + 8, x1: p.x + p.w - 48, dir: -1,
+        speed: 70, vx: 0, vy: 0, t: srnd() * TAU,
+      });
+    }
+  });
+
+  // --- rogue terminals (float & shoot error bolts) ---
+  for (let tx = 900; tx < LEVEL_W - 1200; tx += 550 + srnd() * 350) {
+    const ty = groundY() - 190 - srnd() * 120;
+    enemies.push({ kind: 'term', x: tx, y: ty, baseY: ty, w: 52, h: 44, cool: 1.5 + srnd(), t: srnd() * TAU });
+  }
+
+  // --- floating error bubbles ---
+  for (let bx = 500; bx < LEVEL_W - 1000; bx += 380 + srnd() * 300) {
+    const by = groundY() - 120 - srnd() * 180;
+    enemies.push({
+      kind: 'bubble', x: bx, y: by, baseY: by, w: 30, h: 30,
+      amp: 40 + srnd() * 50, freq: 1 + srnd(), t: srnd() * TAU,
+    });
+  }
+
+  // --- foreground decorations (glitch palms & server racks on the ground) ---
+  for (let dx = 60; dx < LEVEL_W - 200; dx += 260 + srnd() * 320) {
+    const inPit = pits.some(([ppx, ppw]) => dx > ppx - 30 && dx < ppx + ppw + 30);
+    if (inPit) continue;
+    decor.push({ x: dx, kind: srnd() < 0.5 ? 'palm' : 'rack', blink: srnd() * TAU });
+  }
+
+  // --- parallax floating isles (mid background) ---
+  for (let ix = 400; ix < LEVEL_W - 1200; ix += 700 + srnd() * 500) {
+    isles.push({ x: ix, offY: -240 - srnd() * 140, w: 60 + srnd() * 50, t: srnd() * TAU });
+  }
+
+  // --- far server skyline (precomputed so it never shifts while scrolling) ---
+  let fs = 4242;
+  const fr = () => { fs = (fs * 1664525 + 1013904223) >>> 0; return fs / 4294967296; };
+  let fx = -100;
+  while (fx < LEVEL_W + 400) {
+    const bw = 60 + fr() * 150;
+    const bh = 90 + fr() * 240;
+    const wins = [];
+    for (let wy = 14; wy < bh - 20; wy += 18) {
+      for (let wx = 8; wx < bw - 10; wx += 16) {
+        if (fr() < 0.25) {
+          wins.push({ x: wx, y: wy, c: fr() < 0.5 ? '#7df9ff' : '#ff5fd2', ph: fr() * TAU });
+        }
+      }
+    }
+    farBuildings.push({ x: fx, w: bw, h: bh, wins });
+    fx += bw + 30 + fr() * 140;
+  }
+
+  solids = groundSegs.concat(platforms);
+}
+
+/* ==========================================================================
+   SECTION 4 — ENTITIES & GAME FLOW
+   ========================================================================== */
+
+// ----- the hero: a tiny hooded terminal explorer -----
+const player = {
+  x: 80, y: 0, w: 34, h: 46,
+  vx: 0, vy: 0,
+  facing: 1,
+  onGround: false,
+  animT: 0,
+  shootCd: 0,
+  invuln: 0,
+  dead: false,
+};
+
+// ----- the final boss: a huge disfigured cyber-lobster -----
+const boss = {
+  x: LEVEL_W - 420, y: 0, w: 200, h: 160,
+  hp: 10, maxHp: 10,
+  vx: 0, vy: 0, onGround: false,
+  dir: -1, t: 0, attackCd: 2.2, jumpCd: 3,
+  active: false, emerged: false,
+};
+
+const bolts = [];        // player "prompt bolts"
+const bossShots = [];    // falling glitch bubbles & terminal error bolts
+const pops = [];         // particles
+const floatTexts = [];   // floating combat text
+
+let spawnPoint = { x: 80, y: 0 };
+
+// ----- collision helpers -----
+function rectHit(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function solidAt(x, y, w, h) {
+  const r = { x, y, w, h };
+  return solids.some((s) => rectHit(r, s));
+}
+// integrate movement and resolve collisions axis-by-axis against all solids
+function moveSolid(ent, dt) {
+  ent.x += ent.vx * dt;
+  for (const s of solids) {
+    if (rectHit(ent, s)) {
+      if (ent.vx > 0) ent.x = s.x - ent.w;
+      else if (ent.vx < 0) ent.x = s.x + s.w;
+      ent.vx = 0;
+    }
+  }
+  ent.y += ent.vy * dt;
+  ent.onGround = false;
+  for (const s of solids) {
+    if (rectHit(ent, s)) {
+      if (ent.vy > 0) { ent.y = s.y - ent.h; ent.onGround = true; }
+      else if (ent.vy < 0) ent.y = s.y + s.h;
+      ent.vy = 0;
+    }
+  }
+}
+
+// ----- particles & floating text -----
+function addPop(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    pops.push({ x, y, vx: rand(-160, 160), vy: rand(-200, 40), life: rand(0.3, 0.7), color });
+  }
+}
+function addText(x, y, txt, color) {
+  floatTexts.push({ x, y, txt, color, life: 1.1, vy: -40 });
+}
+
+// ----- player actions -----
+function jump() {
+  if (state !== 'play' || player.dead) return;
+  if (player.onGround) {
+    player.vy = -JUMP_VEL;
+    player.onGround = false;
+    sfx.jump();
+  }
+}
+function shoot() {
+  if (state !== 'play' || player.dead || player.shootCd > 0) return;
+  player.shootCd = 0.26;
+  bolts.push({
+    x: player.x + player.w / 2 + player.facing * 18,
+    y: player.y + 20,
+    vx: player.facing * 950,
+    vy: rand(-25, 25),
+    w: 16, h: 8, life: 1.1,
+  });
+  sfx.shoot();
+}
+
+// ----- damage, respawn, win/lose -----
+function hurtPlayer(dmg) {
+  if (player.invuln > 0 || player.dead || state !== 'play') return;
+  health -= dmg;
+  player.invuln = 1.1;
+  player.vy = -420;
+  player.vx = -player.facing * 220;
+  shake = 10;
+  sfx.hurt();
+  addPop(player.x + player.w / 2, player.y + player.h / 2, '#ff4d6d', 8);
+  if (health <= 0) {
+    health = 0;
+    loseLife(false);
+  }
+}
+function loseLife(fromPit) {
+  lives -= 1;
+  if (lives <= 0) {
+    lives = 0;
+    gameOver();
+    return;
+  }
+  boss.active = false;   // boss fight resets if you die
+  respawn();
+  if (fromPit) toast('VOIDED! -1 LIFE');
+}
+function respawn() {
+  player.x = spawnPoint.x;
+  player.y = spawnPoint.y;
+  player.vx = 0; player.vy = 0;
+  player.invuln = 1.5;
+  health = MAX_HEALTH;
+  camX = clamp(player.x - W * 0.35, 0, Math.max(0, LEVEL_W - W));
+}
+function gameOver() {
+  player.dead = true;
+  state = 'over';
+  sfx.over();
+  elStatsOver.textContent = 'SCORE ' + score + '   TOKENS ' + tokens;
+  showScreen('over');
+  elHud.style.display = 'none';
+  elProgressWrap.style.display = 'none';
+}
+function winGame() {
+  state = 'win';
+  sfx.win();
+  const timeBonus = Math.max(0, 5000 - Math.floor(worldTime * 10));
+  score += timeBonus;
+  addText(boss.x + boss.w / 2, boss.y - 30, 'DEFEATED!', '#ffe66d');
+  elStatsWin.textContent = 'SCORE ' + score + ' (incl. ' + timeBonus + ' time bonus)   TOKENS '
+    + tokens + '   TIME ' + worldTime.toFixed(1) + 's';
+  showScreen('win');
+  elHud.style.display = 'none';
+  elProgressWrap.style.display = 'none';
+}
+
+// ----- start / restart -----
+function startGame() {
+  buildLevel();
+  score = 0; tokens = 0;
+  health = MAX_HEALTH; lives = 3;
+  spawnPoint = { x: 80, y: groundY() - 220 };
+  bolts.length = 0; bossShots.length = 0; pops.length = 0; floatTexts.length = 0;
+  boss.hp = boss.maxHp; boss.active = false; boss.emerged = false;
+  boss.x = LEVEL_W - 420; boss.y = groundY() - boss.h;
+  boss.vx = 0; boss.vy = 0; boss.dir = -1;
+  boss.t = 0; boss.attackCd = 2.2; boss.jumpCd = 3;
+  player.x = spawnPoint.x; player.y = spawnPoint.y;
+  player.vx = 0; player.vy = 0; player.facing = 1;
+  player.onGround = false; player.shootCd = 0; player.invuln = 0;
+  player.dead = false; player.animT = 0;
+  camX = 0; shake = 0;
+  state = 'play';
+  showScreen('');            // hide every overlay
+  elHud.style.display = 'block';
+  elProgressWrap.style.display = 'block';
+}
+
+// ----- resize: shift the whole world vertically with the ground -----
+let prevGroundY = 0;
+function onResize() {
+  resize();
+  const dy = groundY() - prevGroundY;
+  if (dy !== 0 && state !== 'start') {
+    for (const s of groundSegs) s.y += dy;
+    for (const p of platforms) p.y += dy;
+    for (const c of coins) c.y += dy;
+    for (const e of enemies) { e.y += dy; if (e.baseY !== undefined) e.baseY += dy; }
+    for (const cp of checkpoints) cp.y += dy;
+    boss.y += dy;
+    player.y += dy;
+    spawnPoint.y += dy;
+    solids = groundSegs.concat(platforms);
+  }
+  prevGroundY = groundY();
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+// ----- checkpoints -----
+function updateCheckpoints() {
+  for (const cp of checkpoints) {
+    if (!cp.active
+        && Math.abs(player.x + player.w / 2 - (cp.x + cp.w / 2)) < 40
+        && Math.abs(player.y + player.h - (cp.y + cp.h)) < 90) {
+      cp.active = true;
+      spawnPoint = { x: cp.x - 40, y: groundY() - 220 };
+      health = MAX_HEALTH;
+      score += 200;
+      sfx.checkpoint();
+      toast('CHECKPOINT SAVED');
+      addPop(cp.x + cp.w / 2, cp.y + 20, '#7df9ff', 12);
+    }
+  }
+}
+
+/* ==========================================================================
+   SECTION 5 — UPDATE LOGIC (physics, enemies, boss fight)
+   ========================================================================== */
+
+function updatePlayer(dt) {
+  // horizontal input with acceleration & friction
+  let input = 0;
+  if (keys['ArrowLeft'] || keys['KeyA']) input -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) input += 1;
+  if (input !== 0) {
+    player.vx = clamp(player.vx + input * ACCEL * dt, -MOVE_SPD, MOVE_SPD);
+    player.facing = input;
+  } else {
+    const f = FRICTION * dt;
+    if (Math.abs(player.vx) <= f) player.vx = 0;
+    else player.vx -= Math.sign(player.vx) * f;
+  }
+
+  // gravity
+  player.vy = Math.min(player.vy + GRAVITY * dt, MAX_FALL);
+
+  // move & collide with the world
+  moveSolid(player, dt);
+
+  // world bounds
+  player.x = clamp(player.x, 0, LEVEL_W - player.w);
+  if (player.y > H + 120) loseLife(true);   // fell into a pit / the void
+
+  // timers
+  player.shootCd = Math.max(0, player.shootCd - dt);
+  player.invuln = Math.max(0, player.invuln - dt);
+  player.animT += dt * (Math.abs(player.vx) > 20 ? 12 : 3);
+
+  // during the boss fight the player cannot leave the arena
+  if (boss.active && player.x > ARENA_X - 60) {
+    player.x = clamp(player.x, ARENA_X + 10, LEVEL_W - player.w - 10);
+  }
+}
+
+function updateCamera(dt) {
+  const maxCam = Math.max(0, LEVEL_W - W);
+  const target = clamp(player.x - W * 0.35, 0, maxCam);
+  camX += (target - camX) * Math.min(1, dt * 9);   // smooth follow
+  if (Math.abs(target - camX) < 0.4) camX = target;
+}
+
+function updateCoins(dt) {
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    c.t += dt * 2.2;   // spin/bob animation clock
+    // generous circular pickup check
+    if (Math.abs(player.x + player.w / 2 - c.x) < c.r + player.w / 2
+        && Math.abs(player.y + player.h / 2 - c.y) < c.r + player.h / 2) {
+      coins.splice(i, 1);
+      tokens += 1;
+      score += 25;
+      sfx.coin();
+      addPop(c.x, c.y, '#ffd23f', 6);
+      addText(c.x, c.y - 10, '+25', '#ffe66d');
+    }
+  }
+}
+
+function updateEnemies(dt) {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.t += dt * 6;
+
+    if (e.kind === 'crab') {
+      // corrupted shellfish: patrol back and forth, turn at ledges
+      e.vx = e.dir * e.speed;
+      e.vy = Math.min(e.vy + GRAVITY * dt, MAX_FALL);
+      moveSolid(e, dt);
+      if (e.onGround) {
+        if (e.x <= e.x0 + 1 || e.x + e.w >= e.x1 - 1
+            || !solidAt(e.x + e.dir * (e.w + 6), e.y + e.h + 10, 8, 10)) {
+          e.dir *= -1;
+        }
+      }
+    } else if (e.kind === 'term') {
+      // rogue terminal: hovers, shoots an error bolt when the player is near
+      e.y = e.baseY + Math.sin(e.t * 0.7) * 14;
+      e.cool -= dt;
+      if (e.cool <= 0) {
+        e.cool = rand(1.7, 2.7);
+        if (!player.dead && Math.abs(player.x + player.w / 2 - (e.x + e.w / 2)) < 470) {
+          const dx = player.x + player.w / 2 - (e.x + e.w / 2);
+          const dy = player.y + player.h / 2 - (e.y + e.h / 2);
+          const d = Math.hypot(dx, dy) || 1;
+          bossShots.push({
+            x: e.x + e.w / 2, y: e.y + e.h - 4,
+            vx: dx / d * 320, vy: dy / d * 320,
+            w: 14, h: 14, life: 4, kind: 'err', t: 0,
+          });
+          beep(320, 0.09, 'square', 0.08, 110);
+        }
+      }
+    } else { // 'bubble' — floating error bubble
+      e.y = e.baseY + Math.sin(e.t * e.freq) * e.amp;
+      e.x += Math.sin(e.t * 0.4) * 24 * dt;
+    }
+
+    // contact with the player: stomp from above, otherwise take damage
+    if (state === 'play' && !player.dead && rectHit(player, e)) {
+      const stomp = player.vy > 120 && (player.y + player.h) - e.y <= e.h * 0.6;
+      if (stomp) {
+        player.vy = -JUMP_VEL * 0.62;   // bounce off the enemy
+        score += 150;
+        sfx.stomp();
+        addPop(e.x + e.w / 2, e.y + e.h / 2, '#ff9f1c', 10);
+        addText(e.x + e.w / 2, e.y - 6, '+150', '#ffe66d');
+        enemies.splice(i, 1);
+        continue;
+      }
+      hurtPlayer(25);
+    }
+  }
+}
+
+function updateBolts(dt) {
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    const b = bolts[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.life -= dt;
+    if (b.life <= 0 || b.x < 0 || b.x > LEVEL_W) { bolts.splice(i, 1); continue; }
+    if (solidAt(b.x, b.y, b.w, b.h)) {              // dissipate on walls
+      addPop(b.x, b.y, '#7df9ff', 4);
+      bolts.splice(i, 1);
+      continue;
+    }
+    // hit an enemy
+    let hit = false;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j];
+      if (rectHit(b, e)) {
+        hit = true;
+        score += 100;
+        addPop(e.x + e.w / 2, e.y + e.h / 2, '#ff9f1c', 8);
+        addText(e.x + e.w / 2, e.y - 6, '+100', '#7df9ff');
+        enemies.splice(j, 1);
+        break;
+      }
+    }
+    if (hit) { bolts.splice(i, 1); continue; }
+    // hit the boss
+    if (boss.active && rectHit(b, boss)) {
+      boss.hp -= 1;
+      boss.t = 0;    // trigger a glitch burst
+      shake = 4;
+      sfx.bossHit();
+      addPop(b.x, b.y, '#ff2d55', 8);
+      bolts.splice(i, 1);
+      if (boss.hp <= 0) bossDie();
+    }
+  }
+}
+
+function updateBossShots(dt) {
+  for (let i = bossShots.length - 1; i >= 0; i--) {
+    const s = bossShots[i];
+    if (s.delay && s.delay > 0) {   // staggered spawn (boss rain attack)
+      s.delay -= dt;
+      continue;
+    }
+    s.t += dt;
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    if (s.kind === 'glitch') {      // falling glitch bubbles wobble & accelerate
+      s.vy = Math.min(s.vy + 900 * dt, 700);
+      s.x += Math.sin(s.t * 9) * 60 * dt;
+    }
+    s.life -= dt;
+    if (s.y + s.h >= groundY() && s.vy > 0) {   // splash on the ground
+      addPop(s.x, groundY(), '#ff5fd2', 5);
+      bossShots.splice(i, 1);
+      continue;
+    }
+    if (s.life <= 0 || s.y > H + 40) { bossShots.splice(i, 1); continue; }
+    if (!player.dead && rectHit(player, s)) {
+      hurtPlayer(20);
+      addPop(s.x, s.y, '#ff5fd2', 6);
+      bossShots.splice(i, 1);
+    }
+  }
+}
+
+function updateBoss(dt) {
+  boss.t += dt;
+
+  // emerge when the player enters the arena
+  if (!boss.active && player.x > ARENA_X) {
+    boss.active = true;
+    boss.vx = 0;
+    shake = 14;
+    if (!boss.emerged) {
+      boss.emerged = true;
+      toast('WARNING: CYBER-LOBSTER DETECTED');
+    }
+    beep(140, 0.4, 'sawtooth', 0.18, 60);
+  }
+  if (!boss.active || state !== 'play') return;
+
+  // gravity & collision
+  boss.vy = Math.min(boss.vy + GRAVITY * dt, MAX_FALL);
+  moveSolid(boss, dt);
+  boss.x = clamp(boss.x, ARENA_X + 40, LEVEL_W - boss.w - 20);
+
+  // face & chase the player (gets faster in phase 2)
+  const dx = (player.x + player.w / 2) - (boss.x + boss.w / 2);
+  boss.dir = dx >= 0 ? 1 : -1;
+  const speed = boss.hp <= boss.maxHp / 2 ? 130 : 85;
+
+  if (boss.onGround) {
+    boss.vx = clamp(boss.vx + boss.dir * 1400 * dt, -speed, speed);
+    boss.jumpCd -= dt;             // hops toward the player
+    if (boss.jumpCd <= 0) {
+      boss.vy = -760;
+      boss.onGround = false;
+      boss.jumpCd = rand(2.2, 3.4);
+      beep(200, 0.12, 'square', 0.1);
+    }
+  } else {
+    boss.vx *= 0.98;
+  }
+
+  // ranged attack: rain glitch bubbles down around the player
+  boss.attackCd -= dt;
+  if (boss.attackCd <= 0 && boss.onGround) {
+    boss.attackCd = boss.hp <= boss.maxHp / 2 ? rand(1.4, 2.0) : rand(2.0, 2.8);
+    rainGlitchBubbles();
+  }
+
+  // melee slam when up close
+  if (Math.abs(dx) < 130 && Math.abs(player.y - boss.y) < 120) {
+    hurtPlayer(30);
+  }
+}
+
+function rainGlitchBubbles() {
+  const n = boss.hp <= boss.maxHp / 2 ? 5 : 3;
+  for (let i = 0; i < n; i++) {
+    const tx = clamp(player.x + player.w / 2 + rand(-70, 110), ARENA_X + 60, LEVEL_W - 60);
+    bossShots.push({
+      x: tx, y: -40, vx: 0, vy: 80,
+      w: 26, h: 26, life: 9, kind: 'glitch', t: rand(0, TAU), delay: i * 0.16,
+    });
+  }
+  beep(180, 0.2, 'square', 0.1, 90);
+}
+
+function bossDie() {
+  addPop(boss.x + boss.w / 2, boss.y + boss.h / 2, '#ff2d55', 40);
+  shake = 20;
+  sfx.bossDie();
+  for (let i = 0; i < 5; i++) {
+    addPop(boss.x + rand(0, boss.w), boss.y + rand(0, boss.h), i % 2 ? '#ff9f1c' : '#ff2d55', 14);
+  }
+  winGame();
+}
+
+function updatePops(dt) {
+  for (let i = pops.length - 1; i >= 0; i--) {
+    const p = pops[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vy += 500 * dt;
+    p.life -= dt;
+    if (p.life <= 0) pops.splice(i, 1);
+  }
+}
+function updateFloatTexts(dt) {
+  for (let i = floatTexts.length - 1; i >= 0; i--) {
+    const f = floatTexts[i];
+    f.y += f.vy * dt;
+    f.life -= dt;
+    if (f.life <= 0) floatTexts.splice(i, 1);
+  }
+}
+
+// ----- master update (one call per frame while playing) -----
+function update(dt) {
+  worldTime += dt;
+  if (shake > 0) shake = Math.max(0, shake - dt * 40);
+  if (toastTimer > 0) {
+    toastTimer -= dt;
+    if (toastTimer <= 0) elToast.style.opacity = 0;
+  }
+
+  updatePlayer(dt);
+  updateCamera(dt);
+  updateCoins(dt);
+  updateEnemies(dt);
+  updateBolts(dt);
+  updateBossShots(dt);
+  updateBoss(dt);
+  updateCheckpoints();
+  updatePops(dt);
+  updateFloatTexts(dt);
+}
+
+/* ==========================================================================
+   SECTION 6 — RENDERING (everything is drawn with canvas primitives)
+   ========================================================================== */
+
+const stars = [];   // twinkling sky pixels
+for (let i = 0; i < 90; i++) {
+  stars.push({ x: Math.random(), y: Math.random() * 0.6, s: Math.random() < 0.2 ? 2 : 1, tw: Math.random() * TAU });
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function shadow(x, y, w) {
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(x, y, w, 6, 0, 0, TAU); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+// ----- layer 0: sky, stars, retro sun -----
+function drawSky() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#070418');
+  g.addColorStop(0.45, '#1b0f3a');
+  g.addColorStop(0.8, '#4a1650');
+  g.addColorStop(1, '#6b1f4e');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // stars (tiny parallax)
+  for (const s of stars) {
+    const sx = (((s.x * W * 3 - camX * 0.05) % (W * 3)) + W * 3) % (W * 3);
+    ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(worldTime * 2 + s.tw));
+    ctx.fillStyle = '#b8c7ff';
+    ctx.fillRect(sx, s.y * H * 0.55, s.s, s.s);
+  }
+  ctx.globalAlpha = 1;
+
+  // striped retro sun
+  const sunX = W * 0.78, sunY = H * 0.34, sunR = Math.min(W, H) * 0.22;
+  const sg = ctx.createLinearGradient(0, sunY - sunR, 0, sunY + sunR);
+  sg.addColorStop(0, '#ffe66d');
+  sg.addColorStop(0.5, '#ff5fd2');
+  sg.addColorStop(1, '#7b2ff7');
+  ctx.fillStyle = sg;
+  ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(7,4,24,0.85)';
+  for (let i = 1; i <= 6; i++) {
+    const yy = sunY - sunR + (i / 7) * sunR * 2;
+    ctx.fillRect(sunX - sunR - 2, yy, sunR * 2 + 4, 2 + i * 1.2);
+  }
+}
+
+// ----- layer 1 (parallax 0.15): distant server skyline -----
+function drawFarLayer() {
+  const p = 0.15;
+  for (const b of farBuildings) {
+    const x = b.x - camX * p;
+    if (x < -b.w || x > W) continue;
+    ctx.fillStyle = '#150b33';
+    ctx.fillRect(x, groundY() - b.h, b.w, b.h + 300);
+    for (const w of b.wins) {
+      ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(worldTime * 2.5 + w.ph));
+      ctx.fillStyle = w.c;
+      ctx.fillRect(x + w.x, groundY() - b.h + w.y, 5, 7);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ----- layer 2 (parallax 0.5): floating isles with tiny palms -----
+function drawIsles() {
+  const p = 0.5;
+  for (const isl of isles) {
+    const x = isl.x - camX * p;
+    if (x < -isl.w || x > W) continue;
+    const y = groundY() + isl.offY + Math.sin(worldTime + isl.t) * 6;
+    ctx.fillStyle = '#c98d4b';
+    ctx.beginPath(); ctx.ellipse(x, y, isl.w / 2, 10, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#8a5a2b';
+    ctx.beginPath(); ctx.ellipse(x, y + 4, isl.w / 2.4, 6, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#2ee6a8'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 3, y - 34); ctx.stroke();
+    ctx.strokeStyle = '#ff5fd2';
+    ctx.beginPath(); ctx.moveTo(x + 3, y - 34); ctx.quadraticCurveTo(x - 12, y - 40, x - 18, y - 32); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + 3, y - 34); ctx.quadraticCurveTo(x + 16, y - 42, x + 20, y - 32); ctx.stroke();
+  }
+}
+
+// ----- layer 3: glowing cyber-water (visible through the pits) -----
+function drawWaves() {
+  const y0 = groundY() + 26;
+  ctx.fillStyle = 'rgba(0,40,60,.85)';
+  ctx.fillRect(0, y0, W, H - y0 + 40);
+  ctx.strokeStyle = '#00e5ff';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 8;
+  ctx.beginPath();
+  for (let x = 0; x <= W + 20; x += 20) {
+    const wy = y0 + Math.sin(x * 0.02 + worldTime * 2 - camX * 0.3) * 6;
+    if (x === 0) ctx.moveTo(x, wy); else ctx.lineTo(x, wy);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 0.5;
+  ctx.beginPath();
+  for (let x = 0; x <= W + 20; x += 24) {
+    const wy = y0 + 16 + Math.sin(x * 0.017 + worldTime * 1.6 + 2) * 5;
+    if (x === 0) ctx.moveTo(x, wy); else ctx.lineTo(x, wy);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+// ----- hazard stripes on pit walls -----
+function drawHazard(x, y, w, h) {
+  ctx.fillStyle = '#1a1026';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#ffd23f';
+  for (let i = -h; i < w; i += 12) {
+    ctx.beginPath();
+    ctx.moveTo(x + i, y + h);
+    ctx.lineTo(x + i + 8, y + h);
+    ctx.lineTo(x + i + 14, y);
+    ctx.lineTo(x + i + 6, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// ----- layer 4 (parallax 1.0): circuit-sand ground -----
+function drawGround() {
+  for (const seg of groundSegs) {
+    const x = seg.x - camX;
+    if (x > W || x + seg.w < 0) continue;
+    ctx.fillStyle = '#3a2b20';
+    ctx.fillRect(x, seg.y, seg.w, H - seg.y + 60);
+    // glowing top edge
+    ctx.shadowColor = '#ff5fd2'; ctx.shadowBlur = 8;
+    ctx.fillStyle = '#ff5fd2';
+    ctx.fillRect(x, seg.y, seg.w, 3);
+    ctx.shadowBlur = 0;
+    // circuit grid
+    ctx.strokeStyle = 'rgba(125,249,255,.16)';
+    ctx.lineWidth = 1;
+    const gx0 = seg.x + Math.floor((camX - seg.x) / 60) * 60;
+    for (let gx = gx0; gx < seg.x + seg.w; gx += 60) {
+      ctx.beginPath(); ctx.moveTo(gx - camX, seg.y); ctx.lineTo(gx - camX, H); ctx.stroke();
+    }
+    for (let gy = seg.y + 40; gy < H; gy += 40) {
+      ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + seg.w, gy); ctx.stroke();
+    }
+    // hazard stripes where the ground ends at a pit
+    if (seg.x > 0) drawHazard(seg.x - camX - 10, seg.y, 10, 70);
+    if (seg.x + seg.w < LEVEL_W) drawHazard(seg.x + seg.w - camX, seg.y, 10, 70);
+  }
+}
+
+// ----- foreground decorations: glitch palms & server racks -----
+function drawDecor() {
+  for (const d of decor) {
+    const x = d.x - camX;
+    if (x < -90 || x > W + 90) continue;
+    if (d.kind === 'palm') {
+      // neon palm: teal trunk, magenta/cyan fronds, data-node coconuts
+      ctx.strokeStyle = '#2ee6a8'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(x, groundY()); ctx.quadraticCurveTo(x + 8, groundY() - 40, x + 4, groundY() - 70); ctx.stroke();
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 5; i++) {
+        const a = -Math.PI / 2 + (i - 2) * 0.42;
+        ctx.strokeStyle = i % 2 ? '#ff5fd2' : '#7df9ff';
+        ctx.beginPath();
+        ctx.moveTo(x + 4, groundY() - 70);
+        ctx.quadraticCurveTo(
+          x + 4 + Math.cos(a) * 26, groundY() - 70 + Math.sin(a) * 12,
+          x + 4 + Math.cos(a) * 40, groundY() - 70 + Math.sin(a) * 22);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#ffe66d';
+      ctx.beginPath(); ctx.arc(x + 2, groundY() - 68, 4, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + 10, groundY() - 64, 4, 0, TAU); ctx.fill();
+    } else {
+      // server rack
+      ctx.fillStyle = '#0d1526';
+      ctx.fillRect(x, groundY() - 90, 46, 90);
+      ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, groundY() - 90, 46, 90);
+      for (let i = 0; i < 5; i++) {
+        const ly = groundY() - 84 + i * 16;
+        ctx.fillStyle = '#16233d';
+        ctx.fillRect(x + 4, ly, 38, 10);
+        ctx.fillStyle = (Math.floor(worldTime * 3 + i + d.blink) % 4 === 0) ? '#7df9ff' : '#ff5fd2';
+        ctx.fillRect(x + 7, ly + 3, 5, 4);
+        ctx.fillStyle = '#ffe66d';
+        ctx.fillRect(x + 34, ly + 3, 5, 4);
+      }
+    }
+  }
+}
+
+// ----- floating platforms -----
+function drawPlatform(p) {
+  const x = p.x - camX, y = p.y;
+  if (x > W || x + p.w < 0) return;
+  if (p.type === 'rack') {
+    // server-rack platform with blinking LEDs
+    ctx.fillStyle = '#0d1526';
+    ctx.fillRect(x, y, p.w, p.h);
+    ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, p.w, p.h);
+    for (let i = 0; i < 3; i++) {
+      const ly = y + 4 + i * 5;
+      ctx.fillStyle = '#1c2c4a';
+      ctx.fillRect(x + 3, ly, p.w - 6, 2);
+      const lx = x + 6 + ((Math.floor(worldTime * 4) + i * 7) % Math.max(1, p.w - 20));
+      ctx.fillStyle = (i + Math.floor(worldTime * 2)) % 3 === 0 ? '#7df9ff' : (i % 2 ? '#ff5fd2' : '#ffe66d');
+      ctx.fillRect(lx, ly, 4, 2);
+    }
+  } else if (p.type === 'deck') {
+    // wooden beach deck with neon trim
+    ctx.fillStyle = '#5a3b25';
+    ctx.fillRect(x, y, p.w, p.h);
+    ctx.fillStyle = '#ff5fd2';
+    ctx.fillRect(x, y, p.w, 4);
+    ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 1;
+    for (let i = 8; i < p.w; i += 16) {
+      ctx.beginPath(); ctx.moveTo(x + i, y + 4); ctx.lineTo(x + i, y + p.h); ctx.stroke();
+    }
+  } else { // 'buoy' — striped barrel
+    ctx.fillStyle = '#b3273f';
+    roundRect(x, y - 8, p.w, p.h + 8, 6); ctx.fill();
+    ctx.fillStyle = '#f4f4f4';
+    ctx.fillRect(x + 2, y + 2, p.w - 4, 5);
+    ctx.fillRect(x + 2, y + 12, p.w - 4, 5);
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2;
+    ctx.strokeRect(x, y - 8, p.w, p.h + 8);
+  }
+}
+
+// ----- tokens (coins) -----
+function drawCoin(c) {
+  const x = c.x - camX, y = c.y + Math.sin(c.t) * 4;
+  const wob = 0.35 + 0.65 * Math.abs(Math.cos(c.t * 1.6));
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(wob, 1);   // spin illusion
+  ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 12;
+  ctx.fillStyle = '#ffd23f';
+  ctx.beginPath(); ctx.arc(0, 0, c.r, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#8a5a00';
+  ctx.beginPath(); ctx.arc(0, 0, c.r * 0.62, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ffd23f';
+  ctx.font = 'bold 9px Courier New';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('>_', 0, 1);
+  ctx.restore();
+}
+
+// ----- checkpoints -----
+function drawCheckpoint(cp) {
+  const x = cp.x - camX, y = cp.y;
+  if (x < -40 || x > W + 40) return;
+  ctx.fillStyle = '#3d4b6b';
+  ctx.fillRect(x + cp.w / 2 - 2, y, 4, cp.h);
+  ctx.fillStyle = cp.active ? '#00e5ff' : '#5a6b8c';
+  ctx.beginPath();
+  ctx.moveTo(x + cp.w / 2 + 2, y);
+  ctx.lineTo(x + cp.w / 2 + 34, y + 10);
+  ctx.lineTo(x + cp.w / 2 + 2, y + 20);
+  ctx.closePath(); ctx.fill();
+  if (cp.active) {
+    ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 10;
+    ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x - 6, y - 6, cp.w + 12, cp.h + 6);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#00e5ff';
+    ctx.beginPath();
+    ctx.arc(x + cp.w / 2, y - 8, 6 + Math.sin(worldTime * 5) * 4, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ----- enemies -----
+function drawCrab(e) {
+  const x = e.x - camX + e.w / 2, y = e.y + e.h;
+  if (x < -60 || x > W + 60) return;
+  shadow(x, y + 2, 18);
+  const wig = Math.sin(e.t) * 3;
+  ctx.save();
+  ctx.translate(x, y);
+  // random glitch slices (corrupted shellfish)
+  if (Math.random() < 0.08) {
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = '#00e5ff';
+    ctx.fillRect(-e.w, -e.h + 4 + rand(-3, 3), e.w * 2, 5);
+    ctx.fillStyle = '#ff2d55';
+    ctx.fillRect(-e.w, -e.h + 14 + rand(-3, 3), e.w * 2, 4);
+    ctx.globalAlpha = 1;
+  }
+  // legs
+  ctx.strokeStyle = '#7a2d1d'; ctx.lineWidth = 3;
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 10, -8);
+    ctx.lineTo(i * 16 + wig * i, 0);
+    ctx.stroke();
+  }
+  // body
+  ctx.fillStyle = '#d1452b';
+  ctx.beginPath(); ctx.ellipse(0, -16, 20, 13, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#5c1a10'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#ff9f1c';
+  ctx.fillRect(-14, -22 + (Math.floor(worldTime * 8) % 3) * 6 - 6, 28, 2);
+  // eye stalks + glowing eyes
+  ctx.strokeStyle = '#7a2d1d'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-7, -27); ctx.lineTo(-9, -36); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(7, -27); ctx.lineTo(9, -36); ctx.stroke();
+  ctx.shadowColor = '#ff5fd2'; ctx.shadowBlur = 8;
+  ctx.fillStyle = '#ff5fd2';
+  ctx.beginPath(); ctx.arc(-9, -38, 3.4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(9, -38, 3.4, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  // claws
+  ctx.fillStyle = '#d1452b';
+  ctx.beginPath(); ctx.arc(-24 + wig, -18, 8, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(24 - wig, -18, 8, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#5c1a10'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+}
+
+function drawTerm(e) {
+  const x = e.x - camX, y = e.y;
+  if (x < -80 || x > W + 80) return;
+  // hovering CRT monitor
+  ctx.shadowColor = '#ff5fd2'; ctx.shadowBlur = 14;
+  ctx.fillStyle = '#160f26';
+  roundRect(x, y, e.w, e.h, 6); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#ff5fd2'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#04141a';
+  roundRect(x + 5, y + 5, e.w - 10, e.h - 14, 3); ctx.fill();
+  // glitching error text on screen
+  ctx.fillStyle = '#ff5fd2';
+  ctx.font = 'bold 9px Courier New';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  const chars = '!@#$%&ERR01';
+  let txt = '';
+  const n = 3 + Math.floor(worldTime * 6) % 4;
+  for (let i = 0; i < n; i++) txt += chars[Math.floor(worldTime * 9 + i * 3) % chars.length];
+  ctx.fillText(txt, x + 9, y + 9);
+  // antenna & hover stand
+  ctx.strokeStyle = '#ff5fd2'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x + e.w / 2, y); ctx.lineTo(x + e.w / 2, y - 12); ctx.stroke();
+  ctx.fillStyle = '#ffd23f';
+  ctx.beginPath(); ctx.arc(x + e.w / 2, y - 14, 3, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#2a1f42';
+  ctx.fillRect(x + e.w / 2 - 8, y + e.h - 4, 16, 4);
+}
+
+function drawBubbleEnemy(e) {
+  const x = e.x - camX + e.w / 2, y = e.y + e.h / 2;
+  if (x < -40 || x > W + 40) return;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.shadowColor = '#ff5fd2'; ctx.shadowBlur = 12;
+  ctx.fillStyle = 'rgba(255,95,210,.25)';
+  ctx.beginPath(); ctx.arc(0, 0, 15, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#ff5fd2'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#ffe66d';
+  ctx.font = 'bold 11px Courier New';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('!', 0, 1);
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.beginPath(); ctx.arc(-5, -5, 3, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+// ----- the hero: hooded terminal explorer with glowing eyes & a cape -----
+function drawPlayer() {
+  if (player.dead) return;
+  if (player.invuln > 0 && Math.floor(worldTime * 22) % 2 === 0) return; // i-frame flicker
+
+  const x = player.x - camX + player.w / 2;
+  const y = player.y + player.h;
+  const bob = (player.onGround && Math.abs(player.vx) > 20) ? Math.sin(player.animT) * 2 : 0;
+  const facing = player.facing;
+
+  shadow(x, y + 3, 14);
+  ctx.save();
+  ctx.translate(x, y - bob);
+
+  // cape (flows behind, flutters with movement)
+  const capeWave = Math.sin(worldTime * 7) * 3 + player.vx * 0.012;
+  ctx.fillStyle = '#4a1d6b';
+  ctx.beginPath();
+  ctx.moveTo(-facing * 8, -34);
+  ctx.quadraticCurveTo(-facing * (26 + capeWave), -22, -facing * (30 + capeWave * 1.4), -6);
+  ctx.quadraticCurveTo(-facing * (18 + capeWave), -14, -facing * 12, -20);
+  ctx.quadraticCurveTo(-facing * 4, -24, -facing * 6, -34);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#ff5fd2'; ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // legs (walk cycle)
+  ctx.fillStyle = '#0b1020';
+  const legSwing = Math.sin(player.animT) * 5;
+  if (player.onGround && Math.abs(player.vx) > 20) {
+    ctx.fillRect(-9 + legSwing * facing, -12, 7, 12);
+    ctx.fillRect(2 - legSwing * facing, -12, 7, 12);
+  } else {
+    ctx.fillRect(-9, -12, 7, 12);
+    ctx.fillRect(2, -12, 7, 12);
+  }
+
+  // terminal body
+  ctx.fillStyle = '#101a30';
+  roundRect(-13, -42, 26, 32, 5); ctx.fill();
+  ctx.strokeStyle = '#7df9ff'; ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // little screen showing a blinking prompt
+  ctx.fillStyle = '#03252b';
+  roundRect(-9, -27, 18, 12, 2); ctx.fill();
+  ctx.fillStyle = '#00ffc8';
+  ctx.shadowColor = '#00ffc8'; ctx.shadowBlur = 6;
+  ctx.font = 'bold 9px Courier New';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('>_', -6, -21);
+  ctx.shadowBlur = 0;
+
+  // hood (dome over the head)
+  ctx.fillStyle = '#1a2340';
+  ctx.beginPath();
+  ctx.arc(0, -46, 15, Math.PI, TAU);
+  ctx.lineTo(11, -34);
+  ctx.quadraticCurveTo(0, -28, -11, -34);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#7df9ff'; ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // glowing eyes inside the dark hood
+  ctx.shadowColor = '#00ffc8'; ctx.shadowBlur = 14;
+  ctx.fillStyle = '#aefdf0';
+  ctx.beginPath(); ctx.arc(-facing * 5, -42, 3.2, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(facing * 5, -42, 3.2, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // cape knot at the neck
+  ctx.fillStyle = '#ff5fd2';
+  ctx.beginPath();
+  ctx.moveTo(-facing * 10, -34);
+  ctx.lineTo(-facing * 16, -30);
+  ctx.lineTo(-facing * 9, -28);
+  ctx.closePath(); ctx.fill();
+
+  ctx.restore();
+}
+
+// ----- the boss: huge distorted cyber-lobster -----
+function drawBoss() {
+  if (boss.hp <= 0) return;
+  if (!boss.active && !boss.emerged) return;
+  const cx = boss.x - camX + boss.w / 2;
+  const cy = boss.y + boss.h;
+  const facing = boss.dir;
+  const glitching = boss.t < 0.35;   // glitch burst right after being hit
+
+  shadow(cx, cy + 3, 80);
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // chromatic aberration smear when glitching
+  if (glitching) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#00e5ff';
+    ctx.fillRect(-boss.w / 2 - 6, -boss.h, boss.w + 12, boss.h);
+    ctx.fillStyle = '#ff2d55';
+    ctx.fillRect(-boss.w / 2 + 6, -boss.h, boss.w + 12, boss.h);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // legs
+  ctx.strokeStyle = '#7a1420'; ctx.lineWidth = 5;
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 26, -24);
+    ctx.lineTo(i * 34 + (i % 2 ? 6 : -6), 0);
+    ctx.stroke();
+  }
+
+  // tail fan (behind the body)
+  ctx.fillStyle = '#c22740';
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-facing * 70, -60);
+    ctx.lineTo(-facing * (100 + i * 6), -70 - Math.abs(i) * 8);
+    ctx.lineTo(-facing * (104 + i * 6), -52 - Math.abs(i) * 8);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // segmented shell armour
+  for (let i = 0; i < 4; i++) {
+    const sw = 46 - i * 4;
+    const sx = -facing * (i * 26);
+    const sy = -110 + i * 22;
+    ctx.fillStyle = i % 2 ? '#e03048' : '#b81f38';
+    ctx.beginPath(); ctx.ellipse(sx, sy, sw, 20, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#5c0f1e'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = '#ffb3c1';   // armour rivets
+    ctx.beginPath(); ctx.arc(sx - 10, sy - 6, 2.2, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + 10, sy - 6, 2.2, 0, TAU); ctx.fill();
+  }
+
+  // head
+  ctx.fillStyle = '#e03048';
+  ctx.beginPath(); ctx.ellipse(facing * 78, -96, 34, 26, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#5c0f1e'; ctx.lineWidth = 2.5; ctx.stroke();
+
+  // glowing eyes (one bigger — disfigured)
+  ctx.shadowColor = '#ff2d55'; ctx.shadowBlur = 16;
+  ctx.fillStyle = '#ffd0d8';
+  ctx.beginPath(); ctx.arc(facing * 70, -102, 7, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(facing * 90, -100, 4.5, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#2b0a12';
+  ctx.beginPath(); ctx.arc(facing * 72, -102, 3, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(facing * 91, -100, 2, 0, TAU); ctx.fill();
+
+  // antennae
+  ctx.strokeStyle = '#5c0f1e'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(facing * 70, -120); ctx.quadraticCurveTo(facing * 60, -140, facing * 50, -146); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(facing * 88, -120); ctx.quadraticCurveTo(facing * 96, -138, facing * 106, -142); ctx.stroke();
+  ctx.fillStyle = '#ffd23f';
+  ctx.beginPath(); ctx.arc(facing * 50, -146, 4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(facing * 106, -142, 4, 0, TAU); ctx.fill();
+
+  // mismatched claws: huge crusher claw in front, tiny stub behind
+  const clawX = facing * 118, clawY = -70;
+  ctx.fillStyle = '#b81f38';
+  ctx.beginPath(); ctx.arc(clawX, clawY, 26, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#5c0f1e'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(clawX + facing * 14, clawY - 10);
+  ctx.lineTo(clawX + facing * 44, clawY - 22);
+  ctx.lineTo(clawX + facing * 38, clawY - 2);
+  ctx.lineTo(clawX + facing * 46, clawY + 12);
+  ctx.lineTo(clawX + facing * 16, clawY + 12);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  const smallX = -facing * 40, smallY = -40;
+  ctx.fillStyle = '#8f1626';
+  ctx.beginPath(); ctx.arc(smallX, smallY, 12, 0, TAU); ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(smallX - facing * 6, smallY - 8);
+  ctx.lineTo(smallX - facing * 22, smallY - 14);
+  ctx.lineTo(smallX - facing * 20, smallY - 2);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  // random glitch blocks over the body
+  if (glitching || Math.random() < 0.06) {
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? '#00e5ff' : '#ff2d55';
+      ctx.globalAlpha = 0.7;
+      ctx.fillRect(rand(-boss.w / 2, boss.w / 2), rand(-boss.h, -10), rand(8, 30), 4);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+// ----- projectiles -----
+function drawBolts() {
+  for (const b of bolts) {
+    const x = b.x - camX, y = b.y;
+    ctx.shadowColor = '#7df9ff'; ctx.shadowBlur = 10;
+    ctx.fillStyle = '#7df9ff';
+    ctx.fillRect(x, y, 16, 8);
+    ctx.fillStyle = '#eaffff';
+    ctx.fillRect(x + 4, y + 2, 8, 4);
+    ctx.shadowBlur = 0;
+  }
+}
+function drawBossShots() {
+  for (const s of bossShots) {
+    if (s.delay && s.delay > 0) continue;   // not spawned yet
+    const x = s.x - camX, y = s.y;
+    ctx.save();
+    ctx.translate(x + s.w / 2, y + s.h / 2);
+    if (s.kind === 'glitch') ctx.translate(Math.sin(s.t * 11) * 3, 0);   // wobble
+    ctx.shadowColor = '#ff5fd2'; ctx.shadowBlur = 12;
+    ctx.fillStyle = s.kind === 'err' ? '#ff4d4d' : '#ff5fd2';
+    ctx.beginPath(); ctx.arc(0, 0, s.w / 2, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ffe66d'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#2b0a24';
+    ctx.font = 'bold 11px Courier New';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(s.kind === 'err' ? '!' : '#', 0, 1);
+    ctx.restore();
+  }
+}
+
+// ----- particles & floating combat text -----
+function drawPops() {
+  for (const p of pops) {
+    ctx.globalAlpha = clamp(p.life, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - camX - 2, p.y - 2, 4, 4);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawFloatTexts() {
+  ctx.font = 'bold 13px Courier New';
+  ctx.textAlign = 'center';
+  for (const f of floatTexts) {
+    ctx.globalAlpha = clamp(f.life, 0, 1);
+    ctx.shadowColor = f.color; ctx.shadowBlur = 8;
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.txt, f.x - camX, f.y);
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ----- master draw -----
+function draw() {
+  drawSky();
+  drawFarLayer();
+  drawIsles();
+  drawWaves();
+
+  ctx.save();
+  if (shake > 0) ctx.translate(rand(-shake, shake), rand(-shake, shake));
+
+  drawGround();
+  drawDecor();
+  for (const p of platforms) drawPlatform(p);
+  for (const c of coins) drawCoin(c);
+  for (const cp of checkpoints) drawCheckpoint(cp);
+  for (const e of enemies) {
+    if (e.kind === 'crab') drawCrab(e);
+    else if (e.kind === 'term') drawTerm(e);
+    else drawBubbleEnemy(e);
+  }
+  drawBoss();
+  drawBolts();
+  drawBossShots();
+  drawPlayer();
+  drawPops();
+  drawFloatTexts();
+
+  ctx.restore();
+}
+
+// ----- HUD refresh -----
+function updateHUD() {
+  if (state !== 'play') return;
+  elHealth.style.width = (health / MAX_HEALTH * 100) + '%';
+  elLives.textContent = '♥'.repeat(Math.max(0, lives));
+  elScore.textContent = score;
+  elTokens.textContent = tokens;
+  elProgress.style.width = clamp(player.x / (LEVEL_W - 200) * 100, 0, 100) + '%';
+  if (boss.active) {
+    elBossWrap.style.display = 'block';
+    elBossBar.style.width = (boss.hp / boss.maxHp * 100) + '%';
+  } else {
+    elBossWrap.style.display = 'none';
+  }
+}
+
+/* ==========================================================================
+   SECTION 7 — MAIN LOOP & BOOT
+   ========================================================================== */
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);   // clamp big tab-switch gaps
+  last = now;
+  if (state === 'play') update(dt);
+  draw();
+  updateHUD();
+  requestAnimationFrame(frame);
+}
+
+// small debug/testing handle (harmless in production)
+window.__GAME__ = {
+  getState: () => state,
+  player, boss, enemies, coins, checkpoints, bolts, bossShots,
+  LEVEL_W, ARENA_X,
+  getCamX: () => camX,
+  getScore: () => score,
+  getTokens: () => tokens,
+  getLives: () => lives,
+  setLives: (n) => { lives = n; },
+  hurtPlayer, startGame,
+};
+
+showScreen('start');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
