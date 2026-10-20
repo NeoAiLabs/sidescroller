@@ -24,6 +24,8 @@ Each model receives the prompt in [`sidescroller prompt.txt`](./sidescroller%20p
 | Muse Spark 1.2 Contributor Free | [`muse-spark-1.2-contributor-free.html`](./muse-spark-1.2-contributor-free.html) |
 | Muse Spark 1.3 Contributor Free | [`muse-spark-1.3-contributor-free.html`](./muse-spark-1.3-contributor-free.html) |
 | GPT-6 Astra | [`gpt-6-astra.html`](./gpt-6-astra.html) |
+| MiniMax M3.1 Flash Free | [`minimax-m3.1-flash-free.html`](./minimax-m3.1-flash-free.html) |
+| DeepSeek V4.1 Flash Free | [`deepseek-v4.1-flash-free.html`](./deepseek-v4.1-flash-free.html) |
 
 The repository also includes [`index.html`](./index.html), a separate single-file cyberpunk game titled **NEON RAIN**.
 
